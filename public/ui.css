@@ -38,3 +38,9 @@ html { overflow:hidden; }
 .extension-alert .check { display:flex; }
 
 .more-mail { display:block; margin:16px auto; min-width:160px; }
+
+.account-shortcut { display:flex; flex-direction:column; align-items:center; gap:3px; flex-shrink:0; padding:3px; }
+.rail #accounts .account-copy { height:24px; font-size:9px; background:transparent; color:var(--rail-ink); border-radius:4px; }
+.rail button[aria-pressed="true"] { outline:2px solid var(--rail-ink); outline-offset:2px; }
+.rail #all-accounts { font-size:10px; font-weight:700; flex-shrink:0; }
+.account-tag { display:inline-block; font-size:9px; margin-top:4px; color:var(--muted); padding:1px 5px; border:1px solid var(--line); border-radius:4px; }

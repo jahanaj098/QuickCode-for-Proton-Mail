@@ -88,27 +88,49 @@ function matches(item: MailItem): boolean {
     (view === 'all' || (view === 'codes' ? item.codes.length > 0 : item.message.LabelIDs.includes('10')));
 }
 function selection(): void { get('bulk').hidden = !selected.size; get('selection-count').textContent = selected.size + ' selected'; }
+function switchAccount(id: string): void {
+  selectedAccount = id; visibleLimit = 5; selected.clear(); anchor = '';
+  get('reader').hidden = true; active = undefined; render();
+  (id ? get('accounts').querySelector<HTMLButtonElement>('[aria-pressed="true"]') : get('all-accounts'))?.focus({ preventScroll: true });
+}
+function copyAccountEmail(email: string): void {
+  void attempt(async () => { await navigator.clipboard.writeText(email); notify('Email address copied'); });
+}
+get('all-accounts').addEventListener('click', () => switchAccount(''));
 function render(): void {
   appearance(); const accounts = get('accounts'); accounts.replaceChildren();
+  if (selectedAccount && !state.accounts.some(account => account.id === selectedAccount)) selectedAccount = '';
+  get('all-accounts').setAttribute('aria-pressed', String(!selectedAccount));
+  const currentAccount = state.accounts.find(account => account.id === selectedAccount);
+  get('view-title').textContent = currentAccount?.label || 'All accounts';
+  get('view-description').textContent = currentAccount?.email || 'Messages and codes from all your accounts, together.';
   for (const account of state.accounts) {
-    const button = node('button', account.label.slice(0, 2).toUpperCase()); button.title = account.label + ' · ' + account.unread + ' loaded unread'; button.setAttribute('aria-label', button.title);
+    const shortcut = node('div', undefined, 'account-shortcut');
+    const button = node('button', account.label.slice(0, 2).toUpperCase()); button.title = account.label + ' · ' + account.email + ' · ' + account.unread + ' loaded unread'; button.setAttribute('aria-label', 'Switch to ' + account.email);
+    button.setAttribute('aria-pressed', String(selectedAccount === account.id));
     button.style.borderLeft = '3px solid ' + account.color;
-    button.addEventListener('click', () => { selectedAccount = selectedAccount === account.id ? '' : account.id; visibleLimit = 5; selected.clear(); render(); });
-    accounts.append(button);
+    button.addEventListener('click', () => switchAccount(account.id));
+    const copy = node('button', 'Copy', 'account-copy'); copy.title = 'Copy ' + account.email; copy.setAttribute('aria-label', copy.title);
+    copy.addEventListener('click', () => copyAccountEmail(account.email));
+    shortcut.append(button, copy); accounts.append(shortcut);
   }
   get<HTMLButtonElement>('compose-open').disabled = !state.accounts.some(account => account.status === 'ready');
-  get('total-count').textContent = String(state.items.length); get('code-count').textContent = String(state.items.filter(item => item.codes.length).length);
+  const scoped = state.items.filter(item => !selectedAccount || item.accountId === selectedAccount);
+  get('total-count').textContent = String(scoped.length); get('code-count').textContent = String(scoped.filter(item => item.codes.length).length);
   const matched = state.items.filter(matches).sort((a, b) => b.message.Time - a.message.Time);
   const visible = matched.slice(0, visibleLimit); const list = get('list'); list.replaceChildren();
   for (const account of state.accounts) {
+    if (selectedAccount && selectedAccount !== account.id) continue;
     const rows = visible.filter(item => item.accountId === account.id); if (!rows.length && visible.length) continue;
     const heading = node('div', account.label, 'account-heading');
+    const copy = node('button', 'Copy email'); copy.setAttribute('aria-label', 'Copy email address ' + account.email); copy.title = account.email;
+    copy.addEventListener('click', () => copyAccountEmail(account.email)); heading.append(copy);
     if (account.status !== 'ready') {
       const resume = node('button', account.status === 'totp' ? 'Enter 2FA code' : 'Unlock mailbox'); resume.addEventListener('click', () => showLogin({ accountId: account.id, phase: account.status === 'totp' ? 'totp' : 'mailbox' })); heading.append(resume);
     } else if (account.error) heading.append(node('span', account.error));
-    list.append(heading);
+    if (selectedAccount || account.status !== 'ready' || account.error) list.append(heading);
     for (const item of rows) {
-      const row = node('article', undefined, 'mail-row' + (item.message.Unread ? ' unread' : '')); row.dataset.messageId = item.message.ID; row.tabIndex = 0; row.setAttribute('role', 'listitem');
+      const row = node('article', undefined, 'mail-row' + (item.message.Unread ? ' unread' : '')); row.dataset.messageId = item.message.ID; row.dataset.accountId = item.accountId; row.tabIndex = 0; row.setAttribute('role', 'listitem');
       const box = node('input'); box.type = 'checkbox'; box.checked = selected.has(item.message.ID); box.setAttribute('aria-label', 'Select ' + item.message.Subject);
       box.addEventListener('click', event => {
         event.stopPropagation();
@@ -121,11 +143,16 @@ function render(): void {
       });
       const content = node('div', undefined, 'mail-content'); const top = node('div', undefined, 'mail-top'); top.append(node('span', item.message.Sender.Name || item.message.Sender.Address, 'sender'), node('time', new Date(item.message.Time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 'timestamp'));
       content.append(top, node('div', item.message.Subject || '(No subject)', 'subject'));
+      if (!selectedAccount && state.accounts.length > 1) { const tag = node('span', account.label, 'account-tag'); tag.title = account.email; content.append(tag); }
       if (state.settings.previews > 0 && item.preview) content.append(node('div', item.preview, 'preview'));
       for (const code of item.codes) { const chip = node('button', code.value, 'code'); chip.setAttribute('aria-label', 'Copy code ' + code.value); chip.addEventListener('click', event => { event.stopPropagation(); void attempt(async () => { await navigator.clipboard.writeText(code.value); notify('Code copied'); }); }); content.append(chip); }
       if (item.message.NumAttachments) content.append(node('span', ' · ' + item.message.NumAttachments + ' attachment(s)', 'hint'));
       row.append(box, content); row.addEventListener('click', () => { void attempt(() => read(item)); }); list.append(row);
     }
+  }
+  if (!selectedAccount) {
+    const rows = [...list.querySelectorAll<HTMLElement>('.mail-row')];
+    for (const item of visible) { const row = rows.find(row => row.dataset.messageId === item.message.ID && row.dataset.accountId === item.accountId); if (row) list.append(row); }
   }
   if (matched.length > visible.length) {
     const more = node('button', 'More · show next ' + Math.min(5, matched.length - visible.length), 'more-mail'); more.id = 'more-mail';

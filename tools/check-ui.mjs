@@ -31,8 +31,9 @@ try {
     let current = { accounts: [account], items, settings, checkedAt: Date.now(), polling: false };
     const localStorageMock = {}; window.sentMessages = [];
     window.chrome = { storage: { local: { get: async key => ({ [key]: localStorageMock[key] }), set: async data => Object.assign(localStorageMock, data) } }, runtime: { id: 'test-extension', onMessage: { addListener() {} }, sendMessage: async ({ operation, data }) => {
+      if (operation === 'fixture-multi') { current.accounts = [account, {...account, id:'work', label:'Work', email:'work@example.test'}]; const work = {...item('4', 'Work sender', 'Work message', 'Work preview'), accountId:'work'}; work.message.Time = Date.now()/1000+1; current.items = [...items, work]; return {ok:true}; }
       if (operation === 'fixture-expand') { current.items = [...items, ...Array.from({length:5}, (_, i) => item(String(i+4), 'Older sender', 'Older message '+i, 'Older preview'))]; return {ok:true}; }
-      if (operation === 'fixture-reset') { current.items = items; return {ok:true}; }
+      if (operation === 'fixture-reset') { current.accounts = [account]; current.items = items; return {ok:true}; }
       if (operation === 'notification-target') return { ok:true, value: location.search.includes('notificationFixture') ? { accountId:'demo', messageId:'1' } : null };
       if (operation === 'dashboard' || operation === 'refresh') return { ok: true, value: current };
       if (operation === 'read') return { ok: true, value: { ...items.find(item => item.message.ID === data.messageId), body: '<p>Verification code: <b>583920</b></p><img src="https://example.test/tracker"><script>throw Error("unsafe")<\/script>', message: { ...items[0].message, MIMEType: 'text/html' }, attachments: [], signature: 'unverified' } };
@@ -56,6 +57,21 @@ try {
   assert.deepEqual(proofLengths, [256, 256, 256]);
   await page.goto(base + '/ui.html'); await page.waitForSelector('.mail-row'); assert.equal(await page.locator('.mail-row').count(), 3);
   await page.screenshot({ path: path.join(output, 'messages.png') });
+  assert.equal(await page.locator('#all-accounts').getAttribute('aria-pressed'), 'true');
+  await page.evaluate(() => chrome.runtime.sendMessage({ operation: 'fixture-multi' }));
+  await page.locator('#refresh').click(); await page.waitForFunction(() => document.querySelectorAll('.mail-row').length === 4);
+  assert.equal(await page.locator('.mail-row').first().getAttribute('data-account-id'), 'work');
+  await page.screenshot({ path: path.join(output, 'all-accounts.png') });
+  await page.getByRole('button', {name:'Switch to work@example.test', exact:true}).click();
+  assert.equal(await page.locator('.mail-row').count(), 1);
+  assert.equal(await page.locator('#view-title').innerText(), 'Work');
+  await page.getByRole('button', {name:'Copy work@example.test', exact:true}).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'work@example.test');
+  assert.equal(await page.locator('.mail-row').count(), 1);
+  await page.locator('#all-accounts').click(); assert.equal(await page.locator('.mail-row').count(), 4);
+  await page.evaluate(() => chrome.runtime.sendMessage({ operation: 'fixture-reset' }));
+  await page.locator('#refresh').click(); await page.waitForFunction(() => document.querySelectorAll('.mail-row').length === 3);
+
   await page.locator('[data-view="codes"]').click(); assert.equal(await page.locator('.mail-row').count(), 1);
   await page.locator('.code').click(); assert.equal(await page.evaluate(() => navigator.clipboard.readText()), '583920');
   await page.locator('.mail-row').click(); await page.waitForSelector('#code-chips .code');
