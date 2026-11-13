@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.8 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.9 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -63,6 +63,10 @@ Opening a message marks it read on Proton, removes it from the loaded unread lis
 
 Sending shows progress inside the composer: key unlock, encryption, draft creation, attachment upload, recipient preparation and submission. Errors stay visible in the composer and preserve your text. QuickCode reports success only after Proton returns a sent-message identifier. If submission times out, check Proton Sent/Drafts before retrying; no automatic send retry is added. The browser send test uses synthetic server responses and cannot establish successful live delivery.
 
+## Older encrypted messages
+
+A failed recipient-key match refreshes the cached key set once, using the existing derived secret. If strict decryption fails for a matching historical RSA key, QuickCode retries that read with the legacy RSA key-usage compatibility option also present in Proton's published crypto package. This per-call fallback does not change global policy or disable ciphertext integrity checks. Missing old keys still require recovery through Proton Mail; QuickCode cannot reconstruct them. See [OpenPGP's compatibility option](https://docs.openpgpjs.org/module-config.html#allowInsecureDecryptionWithSigningKeys).
+
 ## Restoring encrypted mail
 
 Opening mail after a background-worker restart reloads the account's encrypted keys using the existing derived key secret. Password-derivation salts are requested only when you enter a mailbox password, avoiding an unnecessary password-scope request during normal reads. Real local OpenPGP tests cover cold key restoration with the salts endpoint denied, including address-token signature checks.
@@ -112,7 +116,7 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 37 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 39 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 

@@ -9,8 +9,8 @@ export class Keyring {
   private mailboxes = new Map<string, UnlockedMailbox>();
   constructor(private api: ProtonTransport) {}
   clear(id: string): void { this.mailboxes.delete(id); }
-  async unlock(session: Credential, password?: string): Promise<UnlockedMailbox> {
-    if (this.mailboxes.has(session.id) && !password) return this.mailboxes.get(session.id)!;
+  async unlock(session: Credential, password?: string, force = false): Promise<UnlockedMailbox> {
+    if (this.mailboxes.has(session.id) && !password && !force) return this.mailboxes.get(session.id)!;
     const [{ User: user }, { Addresses: addresses }] = await Promise.all([
       this.api.request<{ User: User }>('core/v4/users', {}, session),
       this.api.request<{ Addresses: Address[] }>('core/v4/addresses', {}, session),
@@ -56,9 +56,29 @@ export class Keyring {
   }
   async decrypt(session: Credential, body: string): Promise<string> {
     if (!body.includes('-----BEGIN PGP MESSAGE-----')) return body;
-    const mailbox = await this.unlock(session);
-    const decrypted = await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: body }), decryptionKeys: mailbox.keys, format: 'utf8' });
-    return decrypted.data;
+    const ids = (await pgp.readMessage({ armoredMessage: body })).getEncryptionKeyIDs().map(id => id.toHex());
+    const matching = (keys: pgp.PrivateKey[]) => ids.some(id => /^0+$/u.test(id)) ? keys : keys.filter(key => key.getKeyIDs().some(id => ids.includes(id.toHex())));
+    const attempt = async (keys: pgp.PrivateKey[], legacy = false) => {
+      const result = await pgp.decrypt({ message: await pgp.readMessage({ armoredMessage: body }), decryptionKeys: keys, format: 'utf8',
+        ...(legacy ? { config: { allowInsecureDecryptionWithSigningKeys: true } } : {}) });
+      return result.data;
+    };
+    let keys = matching((await this.unlock(session)).keys);
+    try { if (keys.length) return await attempt(keys); }
+    catch (error) { if (!/No decryption key packets found|Session key decryption failed|Could not find.*decryption key/iu.test(error instanceof Error ? error.message : '')) throw error; }
+    // Refresh rotated/new keys once. This uses the existing derived secret and
+    // never fetches password salts or changes the message encryption format.
+    keys = matching((await this.unlock(session, undefined, true)).keys);
+    if (!keys.length) throw new Error('The decryption key for this message is unavailable. Open it in Proton Mail and check whether older account keys need restoring.');
+    try { return await attempt(keys); }
+    catch (error) {
+      const legacy = keys.filter(key => key.getKeys().some(part => ids.includes(part.getKeyID().toHex()) && part.getAlgorithmInfo().algorithm.startsWith('rsa')));
+      if (!/No decryption key packets found/iu.test(error instanceof Error ? error.message : '') || !legacy.length) throw error;
+      // Proton's published crypto package enables this for mail affected by an
+      // old RSA key-usage bug. Apply it only to matching keys on this read, not
+      // globally, for new encryption, or for signature/integrity validation.
+      return attempt(legacy, true);
+    }
   }
   async attachment(session: Credential, keyPackets: string, data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
     const mailbox = await this.unlock(session);

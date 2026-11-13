@@ -1,4 +1,4 @@
-# Development status — original implementation 0.1.8
+# Development status — original implementation 0.1.9
 
 This is a newly written project, not the previous extension with its history removed. Application code and UI are new. Third-party dependencies are recorded in THIRD_PARTY.md.
 
@@ -42,7 +42,7 @@ Custom regex filtering rejects some dangerous forms, but is not a full regex exe
 
 Firefox's local package validator currently reports zero errors and one warning: DOMPurify's bundled parser assigns input to an inert document's innerHTML as part of sanitization. The reader consumes only its sanitized output in a restricted sandbox. This warning still requires review before any store submission; it has not been suppressed.
 
-Current local verification: 37 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
+Current local verification: 39 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
 
 ## First real-account validation
 
