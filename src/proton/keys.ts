@@ -11,14 +11,17 @@ export class Keyring {
   clear(id: string): void { this.mailboxes.delete(id); }
   async unlock(session: Credential, password?: string): Promise<UnlockedMailbox> {
     if (this.mailboxes.has(session.id) && !password) return this.mailboxes.get(session.id)!;
-    const [{ User: user }, { Addresses: addresses }, { KeySalts: salts }] = await Promise.all([
+    const [{ User: user }, { Addresses: addresses }] = await Promise.all([
       this.api.request<{ User: User }>('core/v4/users', {}, session),
       this.api.request<{ Addresses: Address[] }>('core/v4/addresses', {}, session),
-      this.api.request<{ KeySalts: { ID: string; KeySalt: string }[] }>('core/v4/keys/salts', {}, session),
     ]);
     if (user.OrganizationPrivateKey) throw new Error('Managed organization keys are not supported in this development version.');
     if (!Array.isArray(user.Keys) || !user.Keys.length) throw new Error('No mailbox keys are available for this account.');
     if (password !== undefined) {
+      // Salts are needed only to derive a key from a newly entered password.
+      // A resumed reader already has keyPassword; refreshed sessions can lack
+      // the password scope needed by the salt endpoint.
+      const { KeySalts: salts } = await this.api.request<{ KeySalts: { ID: string; KeySalt: string }[] }>('core/v4/keys/salts', {}, session);
       const salt = salts.find(entry => entry.ID === user.Keys.find(key => key.Primary === 1)?.ID)?.KeySalt || salts.find(entry => entry.ID === user.Keys[0].ID)?.KeySalt;
       if (!salt) throw new Error('This account has legacy keys without a key salt. Legacy unlock is not implemented in this development build.');
       session.keyPassword = await computeKeyPassword(password, salt);

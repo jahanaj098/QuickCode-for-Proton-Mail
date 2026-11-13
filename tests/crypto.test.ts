@@ -20,12 +20,21 @@ describe('Actual local mailbox cryptography', () => {
       'core/v4/keys/salts': { KeySalts: [{ ID: 'user-key', KeySalt: salt }] },
       'core/v4/addresses': { Addresses: [{ ID: 'address', Email: 'fixture@example.test', Status: 1, Keys: [{ ID: 'address-key', Primary: 1, PrivateKey: address.privateKey, Token: token, Signature: signature }] }] },
     };
-    const api = { request: async (route: string) => payloads[route] } as ProtonTransport;
+    let forbidSalts = false; const routes: string[] = [];
+    const api = { request: async (route: string) => {
+      routes.push(route);
+      if (forbidSalts && route === 'core/v4/keys/salts') throw new Error('Access token does not have sufficient scope');
+      return payloads[route];
+    } } as ProtonTransport;
     const keyring = new Keyring(api); const session: Credential = { id: 'id', uid: 'uid', username: 'fixture', access: 'token', refresh: 'refresh', remember: false, label: '', color: '', phase: 'mailbox' };
     await keyring.unlock(session, 'offline-fixture-password');
     const encrypted = await pgp.encrypt({ message: await pgp.createMessage({ text: 'Code: Ab12Cd' }), encryptionKeys: await pgp.readKey({ armoredKey: address.publicKey }), format: 'armored' });
     expect(await keyring.decrypt(session, encrypted)).toBe('Code: Ab12Cd');
     expect(session.keyPassword).toBe(derived);
+    keyring.clear('id');
+    forbidSalts = true; routes.length = 0;
+    expect(await keyring.decrypt(session, encrypted)).toBe('Code: Ab12Cd');
+    expect(routes).toEqual(['core/v4/users', 'core/v4/addresses']);
     keyring.clear('id');
     const response = payloads['core/v4/addresses'] as { Addresses: { Keys: { Signature: string }[] }[] };
     response.Addresses[0].Keys[0].Signature = user.revocationCertificate;
