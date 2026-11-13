@@ -326,6 +326,10 @@ function quietRows(): void {
 const resetAlerts = node('button', 'Reset confirmation alerts'); resetAlerts.type = 'button';
 resetAlerts.addEventListener('click', () => { void attempt(async () => { await extension.storage.local.set({ quickcodeAlertPreferences: {} }); notify('Confirmation alerts restored'); }); });
 get('preferences-form').append(resetAlerts);
+const diagnostics = node('button', 'Copy background diagnostics'); diagnostics.type = 'button';
+diagnostics.addEventListener('click', () => { void attempt(async () => {
+  const report = await call('background-diagnostics'); await navigator.clipboard.writeText(JSON.stringify(report, null, 2)); notify('Background diagnostics copied (no account addresses or message content)');
+}); }); get('preferences-form').append(diagnostics);
 async function showSettings(): Promise<void> {
   const settings = state.settings;
   for (const key of ['scheme', 'theme', 'density', 'width', 'height', 'limit'] as const) input(key, settings[key]);

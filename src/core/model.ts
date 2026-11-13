@@ -10,7 +10,7 @@ export interface WireMessage {
   Body?: string; MIMEType?: string; Header?: string; Attachments?: Attachment[];
 }
 export interface CodeMatch { value: string; score: number; position: number; source: 'subject' | 'body'; distance: number }
-export interface MailItem { accountId: string; message: WireMessage; preview: string; codes: CodeMatch[] }
+export interface MailItem { accountId: string; message: WireMessage; preview: string; codes: CodeMatch[]; bodyLoaded?: boolean }
 export interface MailDetail extends MailItem { body: string; attachments: Attachment[]; signature: 'unverified' | 'valid' | 'invalid' }
 export interface Credential {
   id: string; username: string; uid: string; access: string; refresh: string; keyPassword?: string;

@@ -5,7 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 const root = path.resolve(import.meta.dirname, '..');
 const manifest = {
-  manifest_version: 3, name: 'QuickCode for Proton Mail', short_name: 'QuickCode', version: '0.1.5',
+  manifest_version: 3, name: 'QuickCode for Proton Mail', short_name: 'QuickCode', version: '0.1.6',
   description: 'An original standalone Proton Mail companion with local decryption and verification-code notifications. Development version.',
   permissions: ['storage', 'alarms', 'notifications', 'clipboardWrite'], host_permissions: ['https://mail.proton.me/*', 'https://mail-api.proton.me/core/v4/captcha*'],
   content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'" },
@@ -25,6 +25,7 @@ for (const browser of ['chrome', 'firefox']) {
   else { variant.background = { scripts: ['background.js'] }; variant.browser_specific_settings = { gecko: { id: 'quickcode@jahanaj098', strict_min_version: '142.0', data_collection_permissions: { required: ['none'] } } }; }
   await fs.writeFile(path.join(directory, 'manifest.json'), JSON.stringify(variant, null, 2));
   await build({ absWorkingDir: root, entryPoints: { background: 'src/background/main.ts', ui: 'src/ui/main.ts', clipboard: 'src/offscreen/clipboard.ts', verification: 'src/content/verification.ts' }, outdir: directory,
+    define: { QUICKCODE_NOTIFICATION_ICON: JSON.stringify('data:image/png;base64,' + (await fs.readFile(path.join(directory, 'icons/128.png'))).toString('base64')) },
     platform: 'browser', bundle: true, format: 'iife', target: ['chrome121', 'firefox142'], legalComments: 'linked', minify: false, logLevel: 'info' });
   for (const file of ['LICENSE', 'THIRD_PARTY.md', 'README.md']) try { await fs.copyFile(path.join(root, file), path.join(directory, file)); } catch { /* Files can be absent during initial development. */ }
   console.log('Built ' + directory);

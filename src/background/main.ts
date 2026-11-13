@@ -12,6 +12,7 @@ import { VerificationRequests } from './verification';
 import { captchaURL, type HumanChallenge } from '../proton/verification';
 import { ensurePollingAlarm } from './polling';
 import { badgeCount } from './badge';
+import { backgroundTask } from './task';
 const verificationTabs = new Map<number, { id: string; owner: string; url: string }>();
 const verification = new VerificationRequests(async (id, challenge, owner) => {
   const url = captchaURL(challenge.token);
@@ -31,6 +32,7 @@ let polling: Promise<void> | undefined;
 let writeQueue = Promise.resolve();
 let badgeAccount = '';
 let unreadCounts: Record<string, number | null> = {};
+let backgroundHealth: { lastStartedAt?: number; lastFinishedAt?: number; lastAlarmAt?: number; lastHeartbeatAt?: number; trigger?: string; result?: string } = {};
 async function updateBadge(): Promise<void> {
   const text = badgeCount([...sessions.keys()], badgeAccount, unreadCounts);
   const scope = badgeAccount ? sessions.get(badgeAccount)?.label || 'Selected account' : 'All accounts';
@@ -55,8 +57,8 @@ const notifications = new Notifications(() => settings);
 const ready = (async () => {
   const local = await extension.storage.local.get(['preferences', 'badgeAccount']); settings = preferences(local.preferences);
   badgeAccount = typeof local.badgeAccount === 'string' ? local.badgeAccount : '';
-  const memory = await extension.storage.session.get(['sessions', 'snapshot', 'seen', 'seeded', 'checkedAt', 'unreadCounts']) as {
-    sessions?: Credential[]; snapshot?: Record<string, MailItem[]>; seen?: string[]; seeded?: string[]; checkedAt?: number; unreadCounts?: Record<string, number | null>;
+  const memory = await extension.storage.session.get(['sessions', 'snapshot', 'seen', 'seeded', 'checkedAt', 'unreadCounts', 'backgroundHealth']) as {
+    sessions?: Credential[]; snapshot?: Record<string, MailItem[]>; seen?: string[]; seeded?: string[]; checkedAt?: number; unreadCounts?: Record<string, number | null>; backgroundHealth?: typeof backgroundHealth;
   };
   const remembered = await vault.get<Credential[]>('rememberedAccounts').catch(() => undefined);
   for (const session of [...(remembered || []), ...(memory.sessions || [])] as Credential[]) sessions.set(session.id, session);
@@ -64,6 +66,7 @@ const ready = (async () => {
   for (const id of memory.seen || []) seen.add(id);
   seeded = new Set(memory.seeded || []); checkedAt = memory.checkedAt || 0;
   unreadCounts = memory.unreadCounts || {};
+  backgroundHealth = memory.backgroundHealth || {};
   if (badgeAccount && !sessions.has(badgeAccount)) badgeAccount = '';
   await ensurePollingAlarm(settings.pollSeconds);
   await updateBadge();
@@ -78,10 +81,14 @@ async function dashboard(): Promise<Dashboard> {
     status: session.phase, unread: items.get(session.id)?.length || 0, error: errors.get(session.id),
   })) };
 }
-async function poll(): Promise<void> {
+async function poll(trigger = 'manual'): Promise<void> {
   await ready;
   if (polling) return polling;
-  polling = (async () => {
+  polling = backgroundTask(async () => {
+    backgroundHealth = { ...backgroundHealth, lastStartedAt: Date.now(), trigger, result: 'running' };
+    if (trigger === 'alarm') backgroundHealth.lastAlarmAt = Date.now();
+    await extension.storage.session.set({ backgroundHealth });
+    let bodyFailures = 0;
     for (const session of sessions.values()) {
       if (session.phase !== 'ready') { unreadCounts[session.id] = null; continue; }
       try { unreadCounts[session.id] = await mailbox.inboxUnread(session); }
@@ -91,10 +98,17 @@ async function poll(): Promise<void> {
         const old = items.get(session.id) || [];
         for (const row of rows) {
           const cached = old.find(item => item.message.ID === row.message.ID);
-          if (cached) { row.preview = cached.preview; row.codes = cached.codes; }
-          else try { const detail = await mailbox.read(session, row.message.ID); row.preview = detail.preview; row.codes = detail.codes; } catch { /* Metadata remains available if a body cannot decrypt. */ }
-          if (!initial && !seen.has(row.message.ID)) { seen.add(row.message.ID); await notifications.show(row); }
-          else seen.add(row.message.ID);
+          if (cached?.bodyLoaded) { row.preview = cached.preview; row.codes = cached.codes; row.bodyLoaded = true; }
+          else try { const detail = await mailbox.read(session, row.message.ID); row.preview = detail.preview; row.codes = detail.codes; row.bodyLoaded = true; }
+          catch { bodyFailures++; row.bodyLoaded = false; }
+          if (initial) seen.add(row.message.ID);
+          else if (!seen.has(row.message.ID)) {
+            // A failed body read must remain eligible for a later OTP retry.
+            // Likewise do not consume mail when the browser rejects creation.
+            if (row.bodyLoaded || row.codes.length) {
+              if (await notifications.show(row)) seen.add(row.message.ID);
+            } else await extension.storage.session.set({ notificationHealth: { attemptedAt: Date.now(), status: 'waiting-for-message-body' } });
+          }
         }
         seeded.add(session.id); items.set(session.id, rows); errors.delete(session.id);
       } catch (error) { errors.set(session.id, error instanceof Error ? error.message : 'Mail refresh failed.'); }
@@ -103,8 +117,15 @@ async function poll(): Promise<void> {
     checkedAt = Date.now();
     await extension.storage.session.set({ snapshot: Object.fromEntries(items), seen: trimmed, seeded: [...seeded], checkedAt, unreadCounts });
     await updateBadge();
+    backgroundHealth.lastFinishedAt = Date.now(); backgroundHealth.result = errors.size || bodyFailures ? 'partial' : 'ok';
+    await extension.storage.session.set({ backgroundHealth });
     extension.runtime.sendMessage({ quickcodeUpdate: true }).catch(() => {});
-  })().finally(() => { polling = undefined; });
+  }, async () => {
+    backgroundHealth.lastHeartbeatAt = Date.now(); await extension.storage.session.set({ backgroundHealth });
+  }).catch(async error => {
+    backgroundHealth.result = 'failed'; backgroundHealth.lastFinishedAt = Date.now();
+    await extension.storage.session.set({ backgroundHealth }); throw error;
+  }).finally(() => { polling = undefined; });
   return polling;
 }
 async function handle(operation: string, input: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
@@ -129,6 +150,13 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'verification-cancel': return verification.finish(String(data.id || ''), owner);
     case 'verification-ping': return true;
     case 'dashboard': return dashboard();
+    case 'background-diagnostics': return {
+      version: extension.runtime.getManifest().version, generatedAt: Date.now(), pollSeconds: settings.pollSeconds,
+      connectedAccounts: sessions.size, unlockedAccounts: [...sessions.values()].filter(session => session.phase === 'ready').length,
+      alarm: await extension.alarms.get('quickcode-poll'), background: backgroundHealth,
+      notificationPermission: await extension.permissions.contains({ permissions: ['notifications'] }),
+      notifications: (await extension.storage.session.get('notificationHealth')).notificationHealth || null,
+    };
     case 'select-account': {
       const id = typeof data.accountId === 'string' ? data.accountId : '';
       if (id && !sessions.has(id)) throw new Error('Account not found.');
@@ -200,11 +228,11 @@ extension.runtime.onMessage.addListener((message, sender, respond) => {
   handle(message.operation, message.data, sender).then(value => respond({ ok: true, value })).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'QuickCode operation failed.' }));
   return true;
 });
-extension.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'quickcode-poll') void poll(); });
+extension.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'quickcode-poll') void poll('alarm').catch(() => {}); });
 extension.notifications.onClicked.addListener(id => { void ready.then(() => notifications.event(id)); });
 extension.notifications.onButtonClicked?.addListener((id, button) => { void ready.then(() => notifications.event(id, button)); });
-extension.runtime.onStartup.addListener(() => { void poll(); });
-extension.runtime.onInstalled.addListener(() => { void poll(); });
+extension.runtime.onStartup.addListener(() => { void poll('startup').catch(() => {}); });
+extension.runtime.onInstalled.addListener(() => { void poll('installed').catch(() => {}); });
 
 extension.tabs.onRemoved.addListener(tabId => {
   const request = verificationTabs.get(tabId); if (!request) return;
@@ -212,5 +240,5 @@ extension.tabs.onRemoved.addListener(tabId => {
 });
 // A restored worker can catch up without any popup or dashboard message.
 void ready.then(() => {
-  if (!checkedAt || Date.now() - checkedAt >= settings.pollSeconds * 1000 || [...sessions.values()].some(session => session.phase === 'ready' && !(session.id in unreadCounts))) return poll();
+  if (!checkedAt || Date.now() - checkedAt >= settings.pollSeconds * 1000 || [...sessions.values()].some(session => session.phase === 'ready' && !(session.id in unreadCounts))) return poll('worker');
 }).catch(() => { console.info('QuickCode: background refresh could not start; it will retry on the next alarm.'); });

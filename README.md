@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.5 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.6 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -57,6 +57,12 @@ Sign-in opens a regular QuickCode tab. If Proton requests a CAPTCHA, a dedicated
 
 Use a separate browser profile and a test account for first validation. Enter credentials only into the extension UI. Do not post passwords, tokens or private keys in issues or chats.
 
+## Background delivery checks
+
+During a running poll, QuickCode records a small progress timestamp every 20 seconds (for at most four minutes). This also protects a long fetch/read sequence from idle worker termination; recording stops when the poll finishes. Failed body reads remain eligible for a later read and OTP notification. Browser-rejected notification creation is retried on a later poll instead of consuming the mail permanently.
+
+If delivery still stalls, choose **Preferences > Copy background diagnostics** after leaving the popup closed through an incoming test mail. The report contains timestamps, alarm configuration, account counts and notification status. It contains no account addresses, message bodies, codes, passwords or tokens. A created browser notification does not prove the OS displayed a toast.
+
 ## Account switching and email copying
 
 The left sidebar starts on **All accounts** on first use, combining messages newest first. Later opens restore your last selected account. Select an account to filter its messages, then choose **All** to return. Account buttons show which account is selected. Each account has a **Copy** button beneath it for copying its email address; the selected account also has **Copy email** above its messages. Copying shows a confirmation toast and does not change the selected account.
@@ -96,7 +102,7 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 34 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 37 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 

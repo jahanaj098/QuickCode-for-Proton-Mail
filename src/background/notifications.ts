@@ -3,6 +3,7 @@ import { extension } from '../core/platform';
 import { notificationKey } from '../core/otp';
 import type { MailItem, Preferences } from '../core/model';
 interface NotificationTarget { accountId: string; messageId: string; code?: string }
+declare const QUICKCODE_NOTIFICATION_ICON: string;
 export class Notifications {
   private warned = false;
   private creating: Promise<void> | undefined;
@@ -10,21 +11,23 @@ export class Notifications {
   private async targets(): Promise<Record<string, NotificationTarget>> {
     return (await extension.storage.session.get('notificationTargets')).notificationTargets as Record<string, NotificationTarget> || {};
   }
-  async show(item: MailItem): Promise<void> {
+  async show(item: MailItem): Promise<boolean> {
+    const record = (status: string, reason?: string) => extension.storage.session.set({ notificationHealth: { attemptedAt: Date.now(), status, ...(reason ? { reason } : {}) } });
     const settings = this.settings(); const account = settings.accounts[item.accountId];
-    if (!settings.notifications || settings.dndUntil > Date.now() || account?.notifications === false) return;
+    if (!settings.notifications || settings.dndUntil > Date.now() || account?.notifications === false) { await record('suppressed-by-settings'); return true; }
     const silenced = settings.quiet.some(rule => rule.enabled && (!rule.accountId || rule.accountId === item.accountId) &&
       (rule.field === 'sender' ? item.message.Sender.Address : item.message.Subject).toLocaleLowerCase().includes(rule.contains.toLocaleLowerCase()));
-    if (silenced) return;
+    if (silenced) { await record('suppressed-by-quiet-rule'); return true; }
     if (!extension.notifications || !await extension.permissions.contains({ permissions: ['notifications'] })) {
-      if (!this.warned) { console.info('QuickCode: desktop notifications are unavailable.'); this.warned = true; } return;
+      await record('permission-unavailable');
+      if (!this.warned) { console.info('QuickCode: desktop notifications are unavailable.'); this.warned = true; } return true;
     }
     const id = await notificationKey(item.message.ID);
     const otp = { ...settings.otp, ...account?.otp }; const code = otp.enabled ? item.codes[0]?.value : undefined;
     const sender = (item.message.Sender.Name || item.message.Sender.Address).replace(/[\r\n]/gu, ' ').slice(0, 60);
     const subject = item.message.Subject.replace(/[\r\n]/gu, ' ').slice(0, 60);
     const options: chrome.notifications.NotificationCreateOptions = {
-      type: 'basic', iconUrl: 'icons/128.png', title: code ? 'QuickCode · Verification code' : 'QuickCode · New mail',
+      type: 'basic', iconUrl: typeof QUICKCODE_NOTIFICATION_ICON === 'string' ? QUICKCODE_NOTIFICATION_ICON : extension.runtime.getURL('icons/128.png'), title: code ? 'QuickCode · Verification code' : 'QuickCode · New mail',
       message: sender + ' — ' + subject + (code ? '\nCode: ' + code + (item.codes.length > 1 ? ' (+' + (item.codes.length - 1) + ' more)' : '') : ''),
     };
     if (code && typeof window === 'undefined') {
@@ -33,7 +36,11 @@ export class Notifications {
     const targets = await this.targets(); targets[id] = { accountId: item.accountId, messageId: item.message.ID, code };
     const recent = Object.fromEntries(Object.entries(targets).slice(-100));
     await extension.storage.session.set({ notificationTargets: recent });
-    try { await extension.notifications.create(id, options); } catch { if (!this.warned) { console.info('QuickCode: the browser could not display a notification.'); this.warned = true; } }
+    try { await extension.notifications.create(id, options); await record('created'); return true; } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const reason = /image|icon|download/iu.test(message) ? 'icon-load-failed' : /permission|disabled|allowed/iu.test(message) ? 'permission-or-policy' : 'browser-error';
+      await record('browser-rejected', reason); if (!this.warned) { console.info('QuickCode: the browser could not display a notification (' + reason + ').'); this.warned = true; } return false;
+    }
   }
   async open(target: NotificationTarget): Promise<boolean> {
     await extension.storage.session.set({ pendingNotification: { accountId: target.accountId, messageId: target.messageId, requestedAt: Date.now() } });

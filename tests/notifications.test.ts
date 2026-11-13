@@ -7,7 +7,7 @@ vi.stubGlobal('chrome', {
   storage: { session: { get: async (id: string) => ({ [id]: storage[id] }), set: async (value: Record<string, unknown>) => { Object.assign(storage, value); } } },
   permissions: { contains: async () => true }, notifications: { create, clear: vi.fn() },
   windows: { getLastFocused: async () => ({ id: 7 }), update: vi.fn(async () => {}), create: createWindow },
-  action: { openPopup }, runtime: { sendMessage: async () => {} },
+  action: { openPopup }, runtime: { getURL: (path: string) => 'chrome-extension://fixture/' + path, sendMessage: async () => {} },
 });
 const { Notifications } = await import('../src/background/notifications');
 const mail: MailItem = { accountId: 'account', preview: 'DO NOT LEAK THIS BODY', codes: [{ value: 'Ab12Cd', score: 1, position: 1, distance: 1, source: 'body' }], message: { ID: 'message', ConversationID: 'conversation', Subject: 'Sign in', Sender: { Name: 'Sender', Address: 'sender@example.test' }, Time: 1, Unread: 1, LabelIDs: ['0'] } };
@@ -38,5 +38,13 @@ describe('Private notification policy', () => {
     openPopup.mockRejectedValueOnce(new Error('gesture required'));
     const notifier = new Notifications(defaults); await notifier.open({ accountId: 'account', messageId: 'message' });
     expect(storage.pendingNotification).toMatchObject({ messageId: 'message' }); expect(createWindow).not.toHaveBeenCalled();
+  });
+  it('leaves a rejected notification eligible for retry', async () => {
+    create.mockRejectedValueOnce(new Error('Temporary browser failure'));
+    const notifier = new Notifications(defaults);
+    expect(await notifier.show(mail)).toBe(false);
+    expect(storage.notificationHealth).toMatchObject({ status: 'browser-rejected' });
+    expect(await notifier.show(mail)).toBe(true);
+    expect(storage.notificationHealth).toMatchObject({ status: 'created' });
   });
 });

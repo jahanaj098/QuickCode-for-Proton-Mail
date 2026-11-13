@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 describe('Alarm and cold-worker behavior', () => {
   it('restores dedupe state and does not notify the same arriving mail after a worker restart', async () => {
     const old = { ID: 'old', ConversationID: 'old', Subject: 'Older mail', Sender: { Address: 'sender@example.test' }, Time: 1, Unread: 1, LabelIDs: ['0'] };
-    const fresh = { ...old, ID: 'new', ConversationID: 'new', Time: 2, Subject: 'OTP: 583920' };
+    const fresh = { ...old, ID: 'new', ConversationID: 'new', Time: 2, Subject: 'Sign-in verification' };
     const session: Record<string, unknown> = { sessions: [{ id: 'account', uid: 'uid', username: 'fixture', label: 'Fixture', color: '#177668', access: 'fake', refresh: 'fake', phase: 'ready', remember: false, keyPassword: 'derived' }],
       snapshot: { account: [{ accountId: 'account', message: old, preview: '', codes: [] }] }, seen: ['old'], seeded: ['account'], checkedAt: Date.now() };
     const alarms: ((alarm: { name: string }) => void)[] = [];
@@ -10,10 +10,14 @@ describe('Alarm and cold-worker behavior', () => {
     const create = vi.fn(async () => 'notification');
     const local: Record<string, unknown> = { badgeAccount: 'account' };
     const badge = vi.fn(async () => {});
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('messages/count') ? { Code: 1000, Counts: [{ LabelID: '0', Unread: 142 }] } : url.includes('mail/v4/messages?') ? { Code: 1000, Messages: [fresh, old] } : { Code: 1000, Message: { ...fresh, Body: '' } })));
+    let failBody = true;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/messages/new') && failBody) { failBody = false; return Response.json({ Code: 503, Error: 'Temporary body failure' }, { status: 503 }); }
+      return Response.json(url.includes('messages/count') ? { Code: 1000, Counts: [{ LabelID: '0', Unread: 142 }] } : url.includes('mail/v4/messages?') ? { Code: 1000, Messages: [fresh, old] } : { Code: 1000, Message: { ...fresh, Body: 'Your verification code is 583920.' } });
+    }));
     const event = () => ({ addListener() {} });
     vi.stubGlobal('chrome', {
-      runtime: { id: 'fixture', onMessage: { addListener: (listener: any) => incoming.push(listener) }, onStartup: event(), onInstalled: event(), sendMessage: async () => {} },
+      runtime: { id: 'fixture', getURL: (path: string) => 'chrome-extension://fixture/' + path, onMessage: { addListener: (listener: any) => incoming.push(listener) }, onStartup: event(), onInstalled: event(), sendMessage: async () => {} },
       tabs: { onRemoved: event() },
       storage: { local: { get: async (key: string | string[]) => Object.fromEntries((Array.isArray(key) ? key : [key]).map(id => [id, local[id]])), remove: async () => {}, set: async (value: Record<string, unknown>) => { Object.assign(local, value); } }, session: {
         get: async (key: string | string[]) => Object.fromEntries((Array.isArray(key) ? key : [key]).map(id => [id, session[id]])),
@@ -27,7 +31,11 @@ describe('Alarm and cold-worker behavior', () => {
     await import('../src/background/main');
     // No dashboard/popup request: worker bootstrap and alarms must work alone.
     alarms.at(-1)!({ name: 'quickcode-poll' });
+    await vi.waitFor(() => expect((session.backgroundHealth as { result?: string })?.result).toBe('partial'));
+    expect(create).not.toHaveBeenCalled(); expect(session.seen).not.toContain('new');
+    alarms.at(-1)!({ name: 'quickcode-poll' });
     await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]).toBeDefined();
     await vi.waitFor(() => expect(session.seen).toContain('new'));
     await vi.waitFor(() => expect(badge).toHaveBeenLastCalledWith({ text: '142' }));
     expect((await dashboard()).value.selectedAccount).toBe('account');
