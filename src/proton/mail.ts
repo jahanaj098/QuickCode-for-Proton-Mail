@@ -41,10 +41,10 @@ export class Mailbox {
     const options = this.preferences(); const folders = options.accounts[session.id]?.folders || ['0'];
     const found = new Map<string, WireMessage>();
     for (const folder of folders) {
-      const response = await this.api.request<{ Messages: WireMessage[] }>('mail/v4/messages?' + new URLSearchParams({ LabelID: folder, Unread: '1', Sort: 'Time', Desc: '1', PageSize: String(options.limit), Page: '0' }), {}, session);
+      const response = await this.api.request<{ Messages: WireMessage[] }>('mail/v4/messages?' + new URLSearchParams({ LabelID: folder, Sort: 'Time', Desc: '1', PageSize: String(Math.max(5, options.limit)), Page: '0' }), {}, session);
       for (const message of response.Messages || []) found.set(message.ID, message);
     }
-    return [...found.values()].sort((a, b) => b.Time - a.Time).slice(0, options.limit).map(message => ({ accountId: session.id, message, codes: extractCodes(message.Subject || '', '', this.otp(session.id)), preview: '' }));
+    return [...found.values()].sort((a, b) => b.Time - a.Time).slice(0, Math.max(5, options.limit)).map(message => ({ accountId: session.id, message, codes: extractCodes(message.Subject || '', '', this.otp(session.id)), preview: '' }));
   }
   private otp(id: string) { const settings = this.preferences(); return { ...settings.otp, ...settings.accounts[id]?.otp }; }
   async read(session: Credential, id: string): Promise<MailDetail> {

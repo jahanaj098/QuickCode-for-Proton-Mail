@@ -52,6 +52,7 @@ describe('Alarm and cold-worker behavior', () => {
     const opened = await new Promise<any>(resolve => incoming.at(-1)!({ quickcode: 1, operation: 'read', data: { accountId: 'account', messageId: 'new' } }, { id: 'fixture' }, resolve));
     expect(opened.ok).toBe(true); expect(opened.value.message.Unread).toBe(0); expect(markedRead).toBe(true);
     expect(badge).toHaveBeenLastCalledWith({ text: '141' });
-    expect((await dashboard()).value.items).toHaveLength(1);
+    const afterRead = (await dashboard()).value;
+    expect(afterRead.items).toHaveLength(2); expect(afterRead.accounts[0].unread).toBe(1);
   });
 });

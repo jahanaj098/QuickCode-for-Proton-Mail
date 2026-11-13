@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.9 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.10 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -59,7 +59,7 @@ Use a separate browser profile and a test account for first validation. Enter cr
 
 ## Reading and sending feedback
 
-Opening a message marks it read on Proton, removes it from the loaded unread list and refreshes the selected toolbar badge from the server. Background OTP inspection does not mark messages read.
+Opening a message marks it read on Proton, updates its read state in the recent list and refreshes the selected toolbar badge from the server. Background OTP inspection does not mark messages read.
 
 Sending shows progress inside the composer: key unlock, encryption, draft creation, attachment upload, recipient preparation and submission. Errors stay visible in the composer and preserve your text. QuickCode reports success only after Proton returns a sent-message identifier. If submission times out, check Proton Sent/Drafts before retrying; no automatic send retry is added. The browser send test uses synthetic server responses and cannot establish successful live delivery.
 
@@ -87,7 +87,7 @@ Polling runs in the background while the browser is running; the toolbar popup c
 
 Notification Open and body clicks target the toolbar popup, with the selected message queued for its reader. If the browser blocks programmatic popup opening, click the QuickCode toolbar icon to read the queued message; no separate page is opened. Chrome 127+ provides the popup-opening API: [Chrome action documentation](https://developer.chrome.com/docs/extensions/reference/api/action#method-openPopup).
 
-The list initially displays the newest five loaded unread messages. **More** reveals five additional loaded messages at a time. Search and account filters reset the display to five. The configured fetch limit still applies; this is not full mailbox history pagination. The toolbar badge separately uses Proton's full unread **Inbox** count for the selected account, or sums Inbox unread counts in All accounts. It is not capped by the loaded-message limit. Selection and counts survive closing the popup and worker restarts. Counts update at each background poll, not instantly when mail changes on another device. A failed/unavailable count shows **?**; zero unread clears the badge.
+The list initially displays the newest five loaded messages, including read and unread mail. Old unread mail does not displace newer read messages. Older messages show a calendar date instead of only a clock time. **More** reveals five additional loaded messages at a time. Search and account filters reset the display to five. The configured fetch limit still applies; this is not full mailbox history pagination. The toolbar badge separately uses Proton's full unread **Inbox** count for the selected account, or sums Inbox unread counts in All accounts. It is not capped by the loaded-message limit. Selection and counts survive closing the popup and worker restarts. Counts update at each background poll, not instantly when mail changes on another device. A failed/unavailable count shows **?**; zero unread clears the badge.
 
 ## Composer conveniences
 
@@ -116,7 +116,7 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 39 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 40 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 

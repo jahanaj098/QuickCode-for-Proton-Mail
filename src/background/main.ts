@@ -80,7 +80,7 @@ function account(id: unknown): Credential {
 async function dashboard(): Promise<Dashboard> {
   return { settings, checkedAt, selectedAccount: badgeAccount, polling: !!polling, items: [...items.values()].flat(), accounts: [...sessions.values()].map(session => ({
     id: session.id, email: session.username, label: settings.accounts[session.id]?.label || session.label, color: settings.accounts[session.id]?.color || session.color,
-    status: session.phase, unread: items.get(session.id)?.length || 0, error: errors.get(session.id),
+    status: session.phase, unread: items.get(session.id)?.filter(item => item.message.Unread).length || 0, error: errors.get(session.id),
   })) };
 }
 async function poll(trigger = 'manual'): Promise<void> {
@@ -99,12 +99,23 @@ async function poll(trigger = 'manual'): Promise<void> {
       try {
         const rows = await mailbox.list(session); const initial = !seeded.has(session.id);
         const old = items.get(session.id) || [];
+        const pendingRead = recentlyRead.get(session.id);
+        if (pendingRead) for (const id of pendingRead) if (!rows.some(row => row.message.ID === id && row.message.Unread)) pendingRead.delete(id);
+        for (const row of rows) {
+          if (pendingRead?.has(row.message.ID)) row.message.Unread = 0;
+          const cached = old.find(item => item.message.ID === row.message.ID);
+          if (cached) { row.preview = cached.preview; row.codes = cached.codes; row.bodyLoaded = cached.bodyLoaded; }
+        }
+        // Show latest metadata immediately; an unreadable historical body must
+        // not leave an older list displayed while the remaining bodies load.
+        items.set(session.id, rows);
+        void extension.runtime.sendMessage({ quickcodeUpdate: true }).catch(() => {});
         for (const row of rows) {
           const cached = old.find(item => item.message.ID === row.message.ID);
           if (cached?.bodyLoaded) { row.preview = cached.preview; row.codes = cached.codes; row.bodyLoaded = true; }
           else try { const detail = await mailbox.read(session, row.message.ID); row.preview = detail.preview; row.codes = detail.codes; row.bodyLoaded = true; }
           catch { bodyFailures++; row.bodyLoaded = false; }
-          if (initial) seen.add(row.message.ID);
+          if (initial || !row.message.Unread) seen.add(row.message.ID);
           else if (!seen.has(row.message.ID)) {
             // A failed body read must remain eligible for a later OTP retry.
             // Likewise do not consume mail when the browser rejects creation.
@@ -114,8 +125,8 @@ async function poll(trigger = 'manual'): Promise<void> {
           }
         }
         const read = recentlyRead.get(session.id);
-        seeded.add(session.id); items.set(session.id, rows.filter(row => !read?.has(row.message.ID))); errors.delete(session.id);
-        if (read) for (const id of read) if (!rows.some(row => row.message.ID === id)) read.delete(id);
+        for (const row of rows) if (read?.has(row.message.ID)) row.message.Unread = 0;
+        seeded.add(session.id); items.set(session.id, rows); errors.delete(session.id);
       } catch (error) { errors.set(session.id, error instanceof Error ? error.message : 'Mail refresh failed.'); }
     }
     const trimmed = [...seen].slice(-2000); seen.clear(); trimmed.forEach(id => seen.add(id));
@@ -186,7 +197,7 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
         await mailbox.action(session, 'read', [id]); detail.message.Unread = 0;
         readRevisions.set(session.id, (readRevisions.get(session.id) || 0) + 1);
         const read = recentlyRead.get(session.id) || new Set<string>(); read.add(id); recentlyRead.set(session.id, read); seen.add(id);
-        items.set(session.id, (items.get(session.id) || []).filter(item => item.message.ID !== id));
+        for (const item of items.get(session.id) || []) if (item.message.ID === id) item.message.Unread = 0;
         try { unreadCounts[session.id] = await mailbox.inboxUnread(session); } catch { unreadCounts[session.id] = null; }
         await extension.storage.session.set({ snapshot: Object.fromEntries(items), unreadCounts }); await updateBadge();
         void extension.runtime.sendMessage({ quickcodeUpdate: true }).catch(() => {});

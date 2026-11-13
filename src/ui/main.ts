@@ -146,7 +146,11 @@ function render(): void {
         } else if (box.checked) selected.add(item.message.ID); else selected.delete(item.message.ID);
         anchor = item.message.ID; render();
       });
-      const content = node('div', undefined, 'mail-content'); const top = node('div', undefined, 'mail-top'); top.append(node('span', item.message.Sender.Name || item.message.Sender.Address, 'sender'), node('time', new Date(item.message.Time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 'timestamp'));
+      const content = node('div', undefined, 'mail-content'); const top = node('div', undefined, 'mail-top');
+      const date = new Date(item.message.Time * 1000), today = date.toDateString() === new Date().toDateString();
+      const timestamp = node('time', today ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }), 'timestamp');
+      timestamp.dateTime = date.toISOString(); timestamp.title = date.toLocaleString();
+      top.append(node('span', item.message.Sender.Name || item.message.Sender.Address, 'sender'), timestamp);
       content.append(top, node('div', item.message.Subject || '(No subject)', 'subject'));
       if (!selectedAccount && state.accounts.length > 1) { const tag = node('span', account.label, 'account-tag'); tag.title = account.email; content.append(tag); }
       if (state.settings.previews > 0 && item.preview) content.append(node('div', item.preview, 'preview'));
