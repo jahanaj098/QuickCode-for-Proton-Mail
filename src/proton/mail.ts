@@ -24,6 +24,12 @@ export function ownsAlias(from: string, address: string): boolean {
 }
 export class Mailbox {
   constructor(private api: ProtonTransport, private keyring: Keyring, private preferences: () => Preferences) {}
+  async inboxUnread(session: Credential): Promise<number> {
+    const response = await this.api.request<{ Counts: { LabelID: string; Unread: number }[] }>('mail/v4/messages/count', {}, session);
+    const count = response.Counts?.find(count => count.LabelID === '0')?.Unread;
+    if (!Number.isSafeInteger(count) || count! < 0) throw new Error('Proton did not return a valid inbox unread count.');
+    return count!;
+  }
   async labels(session: Credential): Promise<Label[]> {
     const response = await this.api.request<{ Labels: Label[] }>('core/v4/labels?Type=1', {}, session); return response.Labels;
   }

@@ -21,6 +21,7 @@ let files: ComposeInput['files'] = []; let patterns: Pattern[] = []; let quiet: 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let verificationId = '';
 let visibleLimit = 5;
+let restoredAccount = false;
 get('login-dialog').addEventListener('close', () => { if (verificationId) void call('verification-cancel', { id: verificationId }).catch(() => {}); });
 function notify(message: string): void { const toast = get('toast'); toast.textContent = message; toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 5000); }
 async function attempt(action: () => Promise<unknown>): Promise<void> { try { await action(); } catch (error) { notify(error instanceof Error ? error.message : 'The action could not be completed.'); } }
@@ -90,6 +91,7 @@ function matches(item: MailItem): boolean {
 function selection(): void { get('bulk').hidden = !selected.size; get('selection-count').textContent = selected.size + ' selected'; }
 function switchAccount(id: string): void {
   selectedAccount = id; visibleLimit = 5; selected.clear(); anchor = '';
+  void attempt(() => call('select-account', { accountId: id }));
   get('reader').hidden = true; active = undefined; render();
   (id ? get('accounts').querySelector<HTMLButtonElement>('[aria-pressed="true"]') : get('all-accounts'))?.focus({ preventScroll: true });
 }
@@ -162,7 +164,11 @@ function render(): void {
   get('list-status').textContent = !state.accounts.length ? 'Connect a Proton account to begin. Standalone login and decryption are experimental.' : errors || (visible.length ? '' : 'No loaded messages match this view. Refresh or choose another view.');
   get('checked').textContent = state.checkedAt ? 'Checked ' + new Date(state.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Not checked yet'; selection();
 }
-async function update(refresh = false): Promise<void> { state = await call<Dashboard>(refresh ? 'refresh' : 'dashboard'); render(); }
+async function update(refresh = false): Promise<void> {
+  state = await call<Dashboard>(refresh ? 'refresh' : 'dashboard');
+  if (!restoredAccount) { selectedAccount = state.selectedAccount || ''; restoredAccount = true; }
+  render();
+}
 async function read(item: MailItem): Promise<void> {
   get('reader').hidden = false; get('message-heading').replaceChildren(node('p', 'Decrypting locally…')); get('message-plain').textContent = ''; get<HTMLIFrameElement>('message-html').hidden = true;
   active = await call<MailDetail>('read', { accountId: item.accountId, messageId: item.message.ID }); raw = false; remote = false;

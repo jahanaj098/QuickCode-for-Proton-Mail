@@ -1,4 +1,4 @@
-# Development status — original implementation 0.1.4
+# Development status — original implementation 0.1.5
 
 This is a newly written project, not the previous extension with its history removed. Application code and UI are new. Third-party dependencies are recorded in THIRD_PARTY.md.
 
@@ -33,7 +33,7 @@ The tests verify local cryptographic round trips and package assembly. They do n
 - Scribe, Proton Drive link sharing, calendar RSVP/ICS import, contact autocomplete and snooze.
 - Attachment inline preview, sender-signature/key-transparency verification, notification sounds, custom notification click actions and undo for destructive actions.
 - Draft autosave; unsent text and attachments are lost if the popup is dismissed.
-- Full server-side mail search; the search filters only fetched messages. Badge counts likewise reflect the fetched unread set, capped by configured message limits.
+- Full server-side mail search; the search filters only fetched messages. The toolbar badge uses full server Inbox unread counts for the selected account or all accounts, refreshed on each poll. Popup lists remain capped by configured message limits.
 - All behavior from the earlier derivative. This version is not feature-equivalent.
 
 ## Security review still needed
@@ -42,7 +42,7 @@ Custom regex filtering rejects some dangerous forms, but is not a full regex exe
 
 Firefox's local package validator currently reports zero errors and one warning: DOMPurify's bundled parser assigns input to an inert document's innerHTML as part of sanitization. The reader consumes only its sanitized output in a restricted sandbox. This warning still requires review before any store submission; it has not been suppressed.
 
-Current local verification: 32 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
+Current local verification: 34 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
 
 ## First real-account validation
 

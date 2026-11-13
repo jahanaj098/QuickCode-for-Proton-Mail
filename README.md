@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.4 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.5 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -59,7 +59,7 @@ Use a separate browser profile and a test account for first validation. Enter cr
 
 ## Account switching and email copying
 
-The left sidebar starts on **All accounts**, showing a combined list ordered newest first. Select an account to filter its messages, then choose **All** to return. Account buttons show which account is selected. Each account has a **Copy** button beneath it for copying its email address; the selected account also has **Copy email** above its messages. Copying shows a confirmation toast and does not change the selected account.
+The left sidebar starts on **All accounts** on first use, combining messages newest first. Later opens restore your last selected account. Select an account to filter its messages, then choose **All** to return. Account buttons show which account is selected. Each account has a **Copy** button beneath it for copying its email address; the selected account also has **Copy email** above its messages. Copying shows a confirmation toast and does not change the selected account.
 
 ## Background notifications and message list
 
@@ -67,7 +67,7 @@ Polling runs in the background while the browser is running; the toolbar popup c
 
 Notification Open and body clicks target the toolbar popup, with the selected message queued for its reader. If the browser blocks programmatic popup opening, click the QuickCode toolbar icon to read the queued message; no separate page is opened. Chrome 127+ provides the popup-opening API: [Chrome action documentation](https://developer.chrome.com/docs/extensions/reference/api/action#method-openPopup).
 
-The list initially displays the newest five loaded unread messages. **More** reveals five additional loaded messages at a time. Search and account filters reset the display to five. The configured fetch limit still applies; this is not full mailbox history pagination.
+The list initially displays the newest five loaded unread messages. **More** reveals five additional loaded messages at a time. Search and account filters reset the display to five. The configured fetch limit still applies; this is not full mailbox history pagination. The toolbar badge separately uses Proton's full unread **Inbox** count for the selected account, or sums Inbox unread counts in All accounts. It is not capped by the loaded-message limit. Selection and counts survive closing the popup and worker restarts. Counts update at each background poll, not instantly when mail changes on another device. A failed/unavailable count shows **?**; zero unread clears the badge.
 
 ## Composer conveniences
 
@@ -96,13 +96,13 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 32 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 34 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 
 No telemetry, analytics or external license server is added. API calls are restricted to the Proton host declared in the manifests. Remembered sessions are encrypted on this device; session-only credentials are discarded when the browser session ends. Neither mode protects an account from someone who controls the browser profile.
 
-Read messages use a sanitized, sandboxed frame with remote images blocked until explicitly allowed. Signatures and key transparency are not verified by the current reader. Badge and list counts represent the loaded unread set, not a complete mailbox count. **Unsent compose drafts are not autosaved.**
+Read messages use a sanitized, sandboxed frame with remote images blocked until explicitly allowed. Signatures and key transparency are not verified by the current reader. The toolbar badge uses full server Inbox unread totals; list counts describe the loaded messages. **Unsent compose drafts are not autosaved.**
 
 ## Support QuickCode
 

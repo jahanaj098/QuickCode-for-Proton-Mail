@@ -11,6 +11,7 @@ import { base64 } from '../core/encoding';
 import { VerificationRequests } from './verification';
 import { captchaURL, type HumanChallenge } from '../proton/verification';
 import { ensurePollingAlarm } from './polling';
+import { badgeCount } from './badge';
 const verificationTabs = new Map<number, { id: string; owner: string; url: string }>();
 const verification = new VerificationRequests(async (id, challenge, owner) => {
   const url = captchaURL(challenge.token);
@@ -28,6 +29,15 @@ let seeded = new Set<string>();
 let checkedAt = 0;
 let polling: Promise<void> | undefined;
 let writeQueue = Promise.resolve();
+let badgeAccount = '';
+let unreadCounts: Record<string, number | null> = {};
+async function updateBadge(): Promise<void> {
+  const text = badgeCount([...sessions.keys()], badgeAccount, unreadCounts);
+  const scope = badgeAccount ? sessions.get(badgeAccount)?.label || 'Selected account' : 'All accounts';
+  await extension.action.setBadgeText({ text });
+  await extension.action.setBadgeBackgroundColor({ color: '#177668' });
+  await extension.action.setTitle({ title: 'QuickCode · ' + scope + ' · ' + (text === '?' ? 'Unread inbox count unavailable; waiting for refresh' : (text || '0') + ' unread inbox messages') });
+}
 const vault = new DeviceVault(extension.storage.local);
 function saveSessions(): Promise<void> {
   writeQueue = writeQueue.catch(() => {}).then(async () => {
@@ -43,23 +53,27 @@ const login = new StandaloneLogin(api, keyring, sessions, saveSessions);
 const mailbox = new Mailbox(api, keyring, () => settings);
 const notifications = new Notifications(() => settings);
 const ready = (async () => {
-  const local = await extension.storage.local.get('preferences'); settings = preferences(local.preferences);
-  const memory = await extension.storage.session.get(['sessions', 'snapshot', 'seen', 'seeded', 'checkedAt']) as {
-    sessions?: Credential[]; snapshot?: Record<string, MailItem[]>; seen?: string[]; seeded?: string[]; checkedAt?: number;
+  const local = await extension.storage.local.get(['preferences', 'badgeAccount']); settings = preferences(local.preferences);
+  badgeAccount = typeof local.badgeAccount === 'string' ? local.badgeAccount : '';
+  const memory = await extension.storage.session.get(['sessions', 'snapshot', 'seen', 'seeded', 'checkedAt', 'unreadCounts']) as {
+    sessions?: Credential[]; snapshot?: Record<string, MailItem[]>; seen?: string[]; seeded?: string[]; checkedAt?: number; unreadCounts?: Record<string, number | null>;
   };
   const remembered = await vault.get<Credential[]>('rememberedAccounts').catch(() => undefined);
   for (const session of [...(remembered || []), ...(memory.sessions || [])] as Credential[]) sessions.set(session.id, session);
   for (const [id, rows] of Object.entries(memory.snapshot || {})) items.set(id, rows as MailItem[]);
   for (const id of memory.seen || []) seen.add(id);
   seeded = new Set(memory.seeded || []); checkedAt = memory.checkedAt || 0;
+  unreadCounts = memory.unreadCounts || {};
+  if (badgeAccount && !sessions.has(badgeAccount)) badgeAccount = '';
   await ensurePollingAlarm(settings.pollSeconds);
+  await updateBadge();
 })();
 function account(id: unknown): Credential {
   const session = typeof id === 'string' ? sessions.get(id) : undefined;
   if (!session) throw new Error('Account not found. Add the account again.'); return session;
 }
 async function dashboard(): Promise<Dashboard> {
-  return { settings, checkedAt, polling: !!polling, items: [...items.values()].flat(), accounts: [...sessions.values()].map(session => ({
+  return { settings, checkedAt, selectedAccount: badgeAccount, polling: !!polling, items: [...items.values()].flat(), accounts: [...sessions.values()].map(session => ({
     id: session.id, email: session.username, label: settings.accounts[session.id]?.label || session.label, color: settings.accounts[session.id]?.color || session.color,
     status: session.phase, unread: items.get(session.id)?.length || 0, error: errors.get(session.id),
   })) };
@@ -69,7 +83,9 @@ async function poll(): Promise<void> {
   if (polling) return polling;
   polling = (async () => {
     for (const session of sessions.values()) {
-      if (session.phase !== 'ready') continue;
+      if (session.phase !== 'ready') { unreadCounts[session.id] = null; continue; }
+      try { unreadCounts[session.id] = await mailbox.inboxUnread(session); }
+      catch { unreadCounts[session.id] = null; }
       try {
         const rows = await mailbox.list(session); const initial = !seeded.has(session.id);
         const old = items.get(session.id) || [];
@@ -85,9 +101,8 @@ async function poll(): Promise<void> {
     }
     const trimmed = [...seen].slice(-2000); seen.clear(); trimmed.forEach(id => seen.add(id));
     checkedAt = Date.now();
-    await extension.storage.session.set({ snapshot: Object.fromEntries(items), seen: trimmed, seeded: [...seeded], checkedAt });
-    await extension.action.setBadgeText({ text: [...items.values()].flat().length ? String([...items.values()].flat().length) : '' });
-    await extension.action.setBadgeBackgroundColor({ color: '#177668' });
+    await extension.storage.session.set({ snapshot: Object.fromEntries(items), seen: trimmed, seeded: [...seeded], checkedAt, unreadCounts });
+    await updateBadge();
     extension.runtime.sendMessage({ quickcodeUpdate: true }).catch(() => {});
   })().finally(() => { polling = undefined; });
   return polling;
@@ -114,6 +129,11 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'verification-cancel': return verification.finish(String(data.id || ''), owner);
     case 'verification-ping': return true;
     case 'dashboard': return dashboard();
+    case 'select-account': {
+      const id = typeof data.accountId === 'string' ? data.accountId : '';
+      if (id && !sessions.has(id)) throw new Error('Account not found.');
+      badgeAccount = id; await extension.storage.local.set({ badgeAccount }); await updateBadge(); return true;
+    }
     case 'notification-target': {
       const target = (await extension.storage.session.get('pendingNotification')).pendingNotification as { accountId: string; messageId: string; requestedAt: number } | undefined;
       await extension.storage.session.remove('pendingNotification');
@@ -144,6 +164,8 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
       const session = account(data.accountId);
       await api.request('core/v4/auth', { method: 'DELETE' }, session).catch(() => {});
       keyring.clear(session.id); sessions.delete(session.id); items.delete(session.id); seeded.delete(session.id);
+      delete unreadCounts[session.id]; if (badgeAccount === session.id) { badgeAccount = ''; await extension.storage.local.set({ badgeAccount }); }
+      await updateBadge();
       await extension.storage.local.remove('quickcodeRecipients:' + session.id); await saveSessions(); return dashboard();
     }
     case 'settings': {
@@ -190,5 +212,5 @@ extension.tabs.onRemoved.addListener(tabId => {
 });
 // A restored worker can catch up without any popup or dashboard message.
 void ready.then(() => {
-  if (!checkedAt || Date.now() - checkedAt >= settings.pollSeconds * 1000) return poll();
+  if (!checkedAt || Date.now() - checkedAt >= settings.pollSeconds * 1000 || [...sessions.values()].some(session => session.phase === 'ready' && !(session.id in unreadCounts))) return poll();
 }).catch(() => { console.info('QuickCode: background refresh could not start; it will retry on the next alarm.'); });

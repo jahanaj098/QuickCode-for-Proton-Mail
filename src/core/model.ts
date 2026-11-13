@@ -27,7 +27,7 @@ export interface Preferences {
   notifications: boolean; otp: OTPPreferences; quiet: QuietRule[]; dndUntil: number;
   accounts: Record<string, AccountPreferences>; appVersion: string;
 }
-export interface Dashboard { accounts: AccountSummary[]; items: MailItem[]; settings: Preferences; polling: boolean; checkedAt: number }
+export interface Dashboard { accounts: AccountSummary[]; items: MailItem[]; settings: Preferences; polling: boolean; checkedAt: number; selectedAccount?: string }
 export type AuthResult = { accountId: string; phase: Credential['phase'] };
 export const defaults = (): Preferences => ({
   scheme: 'auto', theme: 'evergreen', density: 'comfortable', width: 620, height: 600, pollSeconds: 60, limit: 30, previews: 1, customCSS: '',
