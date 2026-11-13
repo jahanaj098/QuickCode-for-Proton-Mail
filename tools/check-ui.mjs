@@ -38,7 +38,7 @@ try {
       if (operation === 'dashboard' || operation === 'refresh') return { ok: true, value: current };
       if (operation === 'read') return { ok: true, value: { ...items.find(item => item.message.ID === data.messageId), body: '<p>Verification code: <b>583920</b></p><img src="https://example.test/tracker"><script>throw Error("unsafe")<\/script>', message: { ...items[0].message, MIMEType: 'text/html' }, attachments: [], signature: 'unverified' } };
       if (operation === 'addresses') return { ok: true, value: [{ ID: 'address', Email: 'sam@example.test', Status: 1 }] };
-      if (operation === 'send') { window.sentMessages.push(data.message); return { ok: true, value: true }; }
+      if (operation === 'send') { if(data.message.subject==='fail-fixture')return {ok:false,error:'Saving encrypted draft: Synthetic rejection'};window.sentMessages.push(data.message); return { ok: true, value: true }; }
       if (operation === 'recent-recipients') return { ok: true, value: ['previous@example.test', 'another@example.test'] };
       if (operation === 'labels') return { ok: true, value: [] };
       if (operation === 'settings') { current = { ...current, settings: data.value }; return { ok: true, value: current }; }
@@ -112,6 +112,20 @@ try {
   await page.locator('#compose-to').fill('second@example.test'); await page.locator('#send').click();
   await page.waitForFunction(() => window.sentMessages.length === 2 && !document.getElementById('compose-dialog').open);
   assert.equal(await page.locator('.extension-alert').count(), 0);
+  await page.locator('#compose-open').click();
+  await page.locator('#compose-to').fill('recipient@example.test');
+  await page.locator('#compose-subject').fill('fail-fixture');
+  await page.locator('#editor').fill('Keep this message after an error');
+  await page.locator('#send').click();
+  await page.waitForSelector('#compose-status[data-error="true"]');
+  assert.ok((await page.locator('#compose-status').innerText()).includes('Synthetic rejection'));
+  assert.equal(await page.locator('#compose-dialog').evaluate(dialog=>dialog.open), true);
+  assert.equal(await page.locator('#editor').innerText(), 'Keep this message after an error');
+  assert.equal(await page.locator('#send').isEnabled(), true);
+  await page.screenshot({path:path.join(output,'send-error.png')});
+  await page.locator('[data-close="compose-dialog"]').click();
+  await page.getByRole('button',{name:'Discard message',exact:true}).click();
+
   await page.locator('#add-account').click(); await page.locator('#username').fill('offline-fixture'); await page.locator('#password').fill('not-a-real-password'); await page.locator('#login-submit').click();
   await page.waitForSelector('#totp-row:not([hidden])'); await page.locator('#totp').fill('123456'); await page.locator('#login-submit').click(); await page.waitForFunction(() => document.getElementById('login-title').textContent.includes('Unlock'));
   assert.equal(await page.locator('#password').inputValue(), ''); await page.locator('[data-close="login-dialog"]').click();

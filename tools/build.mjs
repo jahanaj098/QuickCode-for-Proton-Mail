@@ -5,7 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 const root = path.resolve(import.meta.dirname, '..');
 const manifest = {
-  manifest_version: 3, name: 'QuickCode for Proton Mail', short_name: 'QuickCode', version: '0.1.7',
+  manifest_version: 3, name: 'QuickCode for Proton Mail', short_name: 'QuickCode', version: '0.1.8',
   description: 'An original standalone Proton Mail companion with local decryption and verification-code notifications. Development version.',
   permissions: ['storage', 'alarms', 'notifications', 'clipboardWrite'], host_permissions: ['https://mail.proton.me/*', 'https://mail-api.proton.me/core/v4/captcha*'],
   content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'" },

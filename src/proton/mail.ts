@@ -72,7 +72,8 @@ export class Mailbox {
     const decrypted = attachment.KeyPackets ? await this.keyring.attachment(session, attachment.KeyPackets, encrypted) : encrypted;
     return { name: attachment.Name, type: attachment.MIMEType || 'application/octet-stream', data: base64(decrypted) };
   }
-  async send(session: Credential, input: ComposeInput): Promise<{ id: string }> {
+  async send(session: Credential, input: ComposeInput, progress: (stage: string) => Promise<void> = async () => {}): Promise<{ id: string }> {
+    await progress('Unlocking sender keys');
     const mailbox = await this.keyring.unlock(session);
     const from = mailbox.addresses.find(address => address.Status === 1 && ownsAlias(input.from, address.Email));
     if (!from) throw new Error('The sender must be one of your addresses or its +alias.');
@@ -80,9 +81,11 @@ export class Mailbox {
     const to = recipients(input.to), cc = recipients(input.cc), bcc = recipients(input.bcc);
     if (!to.length) throw new Error('Add at least one To recipient.');
     if (input.html.length > 1_000_000 || input.files.length > 20) throw new Error('This message exceeds QuickCode’s current send limits.');
+    await progress('Encrypting message');
     const sessionKey = await pgp.generateSessionKey({ encryptionKeys: privateKey.toPublic() });
     const armored = await pgp.encrypt({ message: await pgp.createMessage({ text: input.html }), encryptionKeys: privateKey.toPublic(), signingKeys: privateKey, sessionKey, format: 'armored' });
-    const replyAction = input.action === 'forward' ? 2 : input.action ? 0 : undefined;
+    const replyAction = input.action === 'forward' ? 2 : input.action === 'reply-all' ? 1 : input.action ? 0 : undefined;
+    await progress('Saving encrypted draft');
     const draft = await this.api.request<{ Message: WireMessage }>('mail/v4/messages', { method: 'POST', data: {
       Message: { Subject: input.subject, Sender: { Address: input.from, Name: from.DisplayName || mailbox.user.Name }, ToList: to, CCList: cc, BCCList: bcc, MIMEType: 'text/html', Body: armored, Attachments: [] },
       ...(input.parentId ? { ParentID: input.parentId, Action: replyAction } : {}), AttachmentKeyPackets: {},
@@ -90,6 +93,7 @@ export class Mailbox {
     const draftId = draft.Message?.ID; if (!draftId) throw new Error('Proton did not create the draft.');
     const attachments = new Map<string, pgp.SessionKey>();
     for (const file of input.files) {
+      await progress('Uploading attachment ' + (attachments.size + 1) + ' of ' + input.files.length);
       const content = bytes(file.data); if (content.length > 20_000_000) throw new Error('An attachment is larger than the current 20 MB limit.');
       const fileKey = await pgp.generateSessionKey({ encryptionKeys: privateKey.toPublic() });
       const encrypted = await pgp.encrypt({ message: await pgp.createMessage({ binary: content, filename: file.name }), encryptionKeys: privateKey.toPublic(), sessionKey: fileKey, format: 'object' });
@@ -106,6 +110,7 @@ export class Mailbox {
     }
     const addresses: Record<string, unknown> = {}; let mask = 0;
     for (const recipient of [...to, ...cc, ...bcc]) {
+      await progress('Preparing recipient encryption');
       const keys = await this.api.request<{ Address?: { Keys?: { PublicKey: string }[] }; Keys?: { PublicKey: string }[] }>('core/v4/keys/all?Email=' + encodeURIComponent(recipient.Address), {}, session);
       const records = keys.Address?.Keys || keys.Keys || [];
       if (records.length) {
@@ -120,9 +125,11 @@ export class Mailbox {
     const attachmentKeys = Object.fromEntries([...attachments].map(([id, key]) => [id, { Key: base64(key.data), Algorithm: key.algorithm }]));
     const packageData = { Type: mask, MIMEType: 'text/html', Addresses: addresses, Body: base64(bodyPacket as Uint8Array<ArrayBuffer>),
       ...((mask & 4) ? { BodyKey: { Key: base64(sessionKey.data), Algorithm: sessionKey.algorithm }, AttachmentKeys: attachmentKeys } : {}) };
-    await this.api.request('mail/v4/messages/' + encodeURIComponent(draftId), { method: 'POST', data: {
+    await progress('Submitting message to Proton');
+    const result = await this.api.request<{ Sent?: { ID?: string } }>('mail/v4/messages/' + encodeURIComponent(draftId), { method: 'POST', data: {
       Packages: [packageData], ...(input.deliveryTime ? { DeliveryTime: input.deliveryTime } : {}), ...(input.expiresIn ? { ExpiresIn: input.expiresIn } : {}),
     } }, session);
+    if (!result.Sent?.ID) throw new Error('Proton did not confirm sending. Check Drafts and Sent in Proton Mail before trying again.');
     return { id: draftId };
   }
 }

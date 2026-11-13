@@ -1,6 +1,6 @@
 {
   "name": "quickcode-for-proton-mail",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Original standalone Proton Mail companion by jahanaj098",
   "author": "jahanaj098 <ashfquejahan5@gmail.com>",
@@ -13,7 +13,8 @@
     "notices": "node tools/notices.mjs",
     "test:ui": "npm run build && node tools/check-ui.mjs",
     "test:background": "npm run build && node tools/check-background.mjs",
-    "test:background:slow": "npm run build && node tools/check-background-sleep.mjs"
+    "test:background:slow": "npm run build && node tools/check-background-sleep.mjs",
+    "test:send": "npm run build && node tools/check-send.mjs"
   },
   "dependencies": {
     "@openpgp/web-stream-tools": "^0.3.1",

@@ -1,4 +1,4 @@
-# Development status — original implementation 0.1.7
+# Development status — original implementation 0.1.8
 
 This is a newly written project, not the previous extension with its history removed. Application code and UI are new. Third-party dependencies are recorded in THIRD_PARTY.md.
 

@@ -32,6 +32,8 @@ let polling: Promise<void> | undefined;
 let writeQueue = Promise.resolve();
 let badgeAccount = '';
 let unreadCounts: Record<string, number | null> = {};
+const readRevisions = new Map<string, number>();
+const recentlyRead = new Map<string, Set<string>>();
 let backgroundHealth: { lastStartedAt?: number; lastFinishedAt?: number; lastAlarmAt?: number; lastHeartbeatAt?: number; trigger?: string; result?: string } = {};
 async function updateBadge(): Promise<void> {
   const text = badgeCount([...sessions.keys()], badgeAccount, unreadCounts);
@@ -91,8 +93,9 @@ async function poll(trigger = 'manual'): Promise<void> {
     let bodyFailures = 0;
     for (const session of sessions.values()) {
       if (session.phase !== 'ready') { unreadCounts[session.id] = null; continue; }
-      try { unreadCounts[session.id] = await mailbox.inboxUnread(session); }
-      catch { unreadCounts[session.id] = null; }
+      const revision = readRevisions.get(session.id) || 0;
+      try { const count = await mailbox.inboxUnread(session); if (revision === (readRevisions.get(session.id) || 0)) unreadCounts[session.id] = count; }
+      catch { if (revision === (readRevisions.get(session.id) || 0)) unreadCounts[session.id] = null; }
       try {
         const rows = await mailbox.list(session); const initial = !seeded.has(session.id);
         const old = items.get(session.id) || [];
@@ -110,7 +113,9 @@ async function poll(trigger = 'manual'): Promise<void> {
             } else await extension.storage.session.set({ notificationHealth: { attemptedAt: Date.now(), status: 'waiting-for-message-body' } });
           }
         }
-        seeded.add(session.id); items.set(session.id, rows); errors.delete(session.id);
+        const read = recentlyRead.get(session.id);
+        seeded.add(session.id); items.set(session.id, rows.filter(row => !read?.has(row.message.ID))); errors.delete(session.id);
+        if (read) for (const id of read) if (!rows.some(row => row.message.ID === id)) read.delete(id);
       } catch (error) { errors.set(session.id, error instanceof Error ? error.message : 'Mail refresh failed.'); }
     }
     const trimmed = [...seen].slice(-2000); seen.clear(); trimmed.forEach(id => seen.add(id));
@@ -174,7 +179,20 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'totp': return login.secondFactor(String(data.accountId), String(data.code || ''), verify);
     case 'unlock': { const result = await login.unlock(String(data.accountId), String(data.password || '')); await poll(); return result; }
     case 'refresh': await poll(); return dashboard();
-    case 'read': return mailbox.read(account(data.accountId), String(data.messageId));
+    case 'read': {
+      const session = account(data.accountId), id = String(data.messageId);
+      const detail = await mailbox.read(session, id);
+      if (detail.message.Unread) {
+        await mailbox.action(session, 'read', [id]); detail.message.Unread = 0;
+        readRevisions.set(session.id, (readRevisions.get(session.id) || 0) + 1);
+        const read = recentlyRead.get(session.id) || new Set<string>(); read.add(id); recentlyRead.set(session.id, read); seen.add(id);
+        items.set(session.id, (items.get(session.id) || []).filter(item => item.message.ID !== id));
+        try { unreadCounts[session.id] = await mailbox.inboxUnread(session); } catch { unreadCounts[session.id] = null; }
+        await extension.storage.session.set({ snapshot: Object.fromEntries(items), unreadCounts }); await updateBadge();
+        void extension.runtime.sendMessage({ quickcodeUpdate: true }).catch(() => {});
+      }
+      return detail;
+    }
     case 'labels': return mailbox.labels(account(data.accountId));
     case 'recent-recipients': return mailbox.recentRecipients(account(data.accountId));
     case 'addresses': return (await keyring.unlock(account(data.accountId))).addresses.map(({ ID, Email, DisplayName, Status }) => ({ ID, Email, DisplayName, Status }));
@@ -182,11 +200,20 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'action': {
       if (data.action === 'delete' && data.confirmed !== true) throw new Error('Permanent deletion requires confirmation.');
       const ids = Array.isArray(data.ids) ? data.ids as string[] : [];
-      await mailbox.action(account(data.accountId), String(data.action), ids, typeof data.label === 'string' ? data.label : undefined); await poll(); return dashboard();
+      await mailbox.action(account(data.accountId), String(data.action), ids, typeof data.label === 'string' ? data.label : undefined);
+      if (data.action === 'unread') for (const id of ids) recentlyRead.get(String(data.accountId))?.delete(id);
+      await poll(); return dashboard();
     }
     case 'send': {
       if (data.confirmed !== true) throw new Error('Send confirmation is required.');
-      const result = await mailbox.send(account(data.accountId), data.message as ComposeInput); return result;
+      const session = account(data.accountId); let stage = 'Starting send';
+      return backgroundTask(async () => {
+        try {
+          return await mailbox.send(session, data.message as ComposeInput, async value => {
+            stage = value; await extension.runtime.sendMessage({ quickcodeSendProgress: { id: data.requestId, stage } }).catch(() => {});
+          });
+        } catch (error) { throw new Error(stage + ': ' + (error instanceof Error ? error.message : 'Send failed') + ' Your compose text is preserved. Check Proton Drafts/Sent before retrying.'); }
+      }, () => extension.storage.session.set({ sendProgressAt: Date.now() }));
     }
     case 'forget': {
       const session = account(data.accountId);

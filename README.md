@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.7 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.8 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -56,6 +56,12 @@ Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, 
 Sign-in opens a regular QuickCode tab. If Proton requests a CAPTCHA, a dedicated Proton verification tab opens; solve it there and keep the QuickCode tab open. The blocked request resumes once verification completes. Email/SMS-only challenges are not supported yet. See [verification flow](docs/HUMAN_VERIFICATION.md).
 
 Use a separate browser profile and a test account for first validation. Enter credentials only into the extension UI. Do not post passwords, tokens or private keys in issues or chats.
+
+## Reading and sending feedback
+
+Opening a message marks it read on Proton, removes it from the loaded unread list and refreshes the selected toolbar badge from the server. Background OTP inspection does not mark messages read.
+
+Sending shows progress inside the composer: key unlock, encryption, draft creation, attachment upload, recipient preparation and submission. Errors stay visible in the composer and preserve your text. QuickCode reports success only after Proton returns a sent-message identifier. If submission times out, check Proton Sent/Drafts before retrying; no automatic send retry is added. The browser send test uses synthetic server responses and cannot establish successful live delivery.
 
 ## Restoring encrypted mail
 

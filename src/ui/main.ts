@@ -22,6 +22,9 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let verificationId = '';
 let visibleLimit = 5;
 let restoredAccount = false;
+let sendRequestId = '';
+const sendStatus = node('p'); sendStatus.id = 'compose-status'; sendStatus.setAttribute('role', 'status'); sendStatus.setAttribute('aria-live', 'polite');
+get('compose-form').querySelector('.compose-top')!.append(sendStatus);
 get('login-dialog').addEventListener('close', () => { if (verificationId) void call('verification-cancel', { id: verificationId }).catch(() => {}); });
 function notify(message: string): void { const toast = get('toast'); toast.textContent = message; toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 5000); }
 async function attempt(action: () => Promise<unknown>): Promise<void> { try { await action(); } catch (error) { notify(error instanceof Error ? error.message : 'The action could not be completed.'); } }
@@ -250,6 +253,7 @@ function resetComposer(): void {
   get('compose-title').textContent = 'A new message';
   get('compose-form').querySelectorAll('details').forEach(detail => { detail.open = false; });
   get('compose-form').scrollTop = 0;
+  sendStatus.textContent = ''; delete sendStatus.dataset.error;
 }
 function renderFiles(): void { const container = get('compose-files'); container.replaceChildren(); files.forEach((file, index) => { const button = node('button', file.name + ' ×'); button.type = 'button'; button.addEventListener('click', () => { files.splice(index, 1); renderFiles(); }); container.append(button); }); }
 async function addFiles(list: FileList | null): Promise<void> {
@@ -259,13 +263,15 @@ async function addFiles(list: FileList | null): Promise<void> {
 }
 get('compose-form').addEventListener('submit', event => { event.preventDefault(); void attempt(async () => {
   const send = get<HTMLButtonElement>('send'); if (send.disabled) return; send.disabled = true;
+  sendRequestId = crypto.randomUUID(); sendStatus.textContent = ''; delete sendStatus.dataset.error;
   try {
     if (!await confirmAlert('Send this message through your Proton account?', 'Send message', 'send')) return;
+    send.textContent = 'Sending…'; sendStatus.textContent = 'Preparing message…';
     const message: ComposeInput = { accountId: value('compose-account'), from: value('compose-alias').trim() || value('compose-address'), to: value('compose-to'), cc: value('compose-cc'), bcc: value('compose-bcc'), subject: value('compose-subject'),
       html: DOMPurify.sanitize(get('editor').innerHTML), files, ...draftParent,
       deliveryTime: value('delivery') ? Math.floor(new Date(value('delivery')).getTime() / 1000) : undefined, expiresIn: value('expiry') ? Number(value('expiry')) * 3600 : undefined };
     if (message.deliveryTime && message.deliveryTime < Date.now() / 1000 + 60) throw new Error('Choose a delivery time at least a minute in the future.');
-    await call('send', { accountId: message.accountId, message, confirmed: true });
+    await call('send', { accountId: message.accountId, message, confirmed: true, requestId: sendRequestId });
     const key = 'quickcodeRecipients:' + message.accountId;
     const addresses = [message.to, message.cc, message.bcc].join(',').split(/[,;\n]/u).map(address => address.trim()).filter(Boolean);
     try {
@@ -273,8 +279,16 @@ get('compose-form').addEventListener('submit', event => { event.preventDefault()
       await extension.storage.local.set({ [key]: [...new Set([...addresses, ...(Array.isArray(old) ? old : [])])].slice(0, 200) });
     } catch { /* A local suggestion-cache failure must not report a delivered message as failed. */ }
     close('compose-dialog'); resetComposer(); notify(message.deliveryTime ? 'Message scheduled' : 'Message sent');
-  } finally { send.disabled = false; }
+  } catch (error) {
+    sendStatus.dataset.error = 'true'; sendStatus.textContent = error instanceof Error ? error.message : 'Sending failed. Your message is preserved.';
+    sendStatus.setAttribute('role', 'alert');
+  } finally { send.disabled = false; send.textContent = 'Send'; sendRequestId = ''; }
 }); });
+get('compose-form').addEventListener('invalid', event => {
+  const field = event.target as HTMLInputElement;
+  sendStatus.dataset.error = 'true'; sendStatus.setAttribute('role', 'alert');
+  sendStatus.textContent = field.validationMessage || 'Check the message fields before sending.';
+}, true);
 get('compose-account').addEventListener('change', () => { void attempt(fillAddresses); void attempt(loadRecipientSuggestions); });
 get('files').addEventListener('change', () => { void attempt(() => addFiles(get<HTMLInputElement>('files').files)); });
 get('drop-zone').addEventListener('dragover', event => event.preventDefault()); get('drop-zone').addEventListener('drop', event => { event.preventDefault(); void attempt(() => addFiles(event.dataTransfer?.files || null)); });
@@ -389,6 +403,7 @@ async function openNotificationTarget(): Promise<boolean> {
   await read({ accountId: target.accountId, message: { ID: target.messageId } } as MailItem); return true;
 }
 extension.runtime.onMessage.addListener(message => {
+  if (message?.quickcodeSendProgress?.id === sendRequestId && sendRequestId) { sendStatus.setAttribute('role', 'status'); sendStatus.textContent = message.quickcodeSendProgress.stage + '…'; }
   if (message?.quickcodeUpdate) void attempt(() => update());
   if (message?.quickcodeOpenMessage) void attempt(openNotificationTarget);
 });

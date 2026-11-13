@@ -10,10 +10,11 @@ describe('Alarm and cold-worker behavior', () => {
     const create = vi.fn(async () => 'notification');
     const local: Record<string, unknown> = { badgeAccount: 'account' };
     const badge = vi.fn(async () => {});
-    let failBody = true;
+    let failBody = true, markedRead = false;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/messages/read')) { markedRead = true; return Response.json({ Code: 1000 }); }
       if (url.endsWith('/messages/new') && failBody) { failBody = false; return Response.json({ Code: 503, Error: 'Temporary body failure' }, { status: 503 }); }
-      return Response.json(url.includes('messages/count') ? { Code: 1000, Counts: [{ LabelID: '0', Unread: 142 }] } : url.includes('mail/v4/messages?') ? { Code: 1000, Messages: [fresh, old] } : { Code: 1000, Message: { ...fresh, Body: 'Your verification code is 583920.' } });
+      return Response.json(url.includes('messages/count') ? { Code: 1000, Counts: [{ LabelID: '0', Unread: markedRead ? 141 : 142 }] } : url.includes('mail/v4/messages?') ? { Code: 1000, Messages: markedRead ? [old] : [fresh, old] } : { Code: 1000, Message: { ...fresh, Body: 'Your verification code is 583920.' } });
     }));
     const event = () => ({ addListener() {} });
     vi.stubGlobal('chrome', {
@@ -48,5 +49,9 @@ describe('Alarm and cold-worker behavior', () => {
     const response = await dashboard(); expect(response.value.items).toHaveLength(2);
     expect(response.value.selectedAccount).toBe('account'); expect(badge).toHaveBeenLastCalledWith({ text: '142' });
     expect(JSON.stringify(response)).not.toContain('derived'); expect(JSON.stringify(response)).not.toContain('"access"');
+    const opened = await new Promise<any>(resolve => incoming.at(-1)!({ quickcode: 1, operation: 'read', data: { accountId: 'account', messageId: 'new' } }, { id: 'fixture' }, resolve));
+    expect(opened.ok).toBe(true); expect(opened.value.message.Unread).toBe(0); expect(markedRead).toBe(true);
+    expect(badge).toHaveBeenLastCalledWith({ text: '141' });
+    expect((await dashboard()).value.items).toHaveLength(1);
   });
 });
