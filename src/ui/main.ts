@@ -19,6 +19,8 @@ let view = 'all'; let selectedAccount = ''; let selected = new Set<string>(); le
 let loginStep: AuthResult | undefined; let raw = false; let remote = false; let draftParent: { parentId?: string; action?: ComposeInput['action'] } = {};
 let files: ComposeInput['files'] = []; let patterns: Pattern[] = []; let quiet: QuietRule[] = [];
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+let verificationId = '';
+get('login-dialog').addEventListener('close', () => { if (verificationId) void call('verification-cancel', { id: verificationId }).catch(() => {}); });
 function notify(message: string): void { const toast = get('toast'); toast.textContent = message; toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 5000); }
 async function attempt(action: () => Promise<unknown>): Promise<void> { try { await action(); } catch (error) { notify(error instanceof Error ? error.message : 'The action could not be completed.'); } }
 function appearance(): void {
@@ -103,6 +105,11 @@ function download(file: { name: string; type: string; data: string }): void {
   const url = URL.createObjectURL(new Blob([bytes(file.data)], { type: file.type })); const a = node('a'); a.href = url; a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 function showLogin(step?: AuthResult): void {
+  if (location.protocol.endsWith('-extension:') && !new URLSearchParams(location.search).has('window')) {
+    const params = new URLSearchParams({ window: '1', signin: '1' });
+    if (step) params.set('resume', step.accountId);
+    void extension.tabs.create({ url: extension.runtime.getURL('ui.html?' + params) }); return;
+  }
   loginStep = step; get('login-error').textContent = ''; input('password', ''); input('totp', '');
   get<HTMLInputElement>('username').required = !step;
   get<HTMLInputElement>('totp').required = step?.phase === 'totp';
@@ -115,11 +122,14 @@ function showLogin(step?: AuthResult): void {
 get('login-form').addEventListener('submit', event => {
   event.preventDefault(); void attempt(async () => {
     const button = get<HTMLButtonElement>('login-submit'); button.disabled = true; get('login-error').textContent = '';
+    verificationId = crypto.randomUUID();
+    get('login-error').textContent = 'Signing in. If Proton opens a verification tab, complete the challenge there.';
+    const heartbeat = setInterval(() => { void call('verification-ping').catch(() => {}); }, 20_000);
     try {
-      const result = !loginStep ? await call<AuthResult>('login', { username: value('username'), password: value('password'), remember: checked('remember'), totp: value('totp') }) : await call<AuthResult>(loginStep.phase === 'totp' ? 'totp' : 'unlock', { accountId: loginStep.accountId, code: value('totp'), password: value('password') });
+      const result = !loginStep ? await call<AuthResult>('login', { username: value('username'), password: value('password'), remember: checked('remember'), totp: value('totp'), verificationId }) : await call<AuthResult>(loginStep.phase === 'totp' ? 'totp' : 'unlock', { accountId: loginStep.accountId, code: value('totp'), password: value('password'), verificationId });
       input('password', ''); if (result.phase === 'ready') { close('login-dialog'); loginStep = undefined; await update(true); notify('Mailbox connected'); } else { showLogin(result); await update(); }
     } catch (error) { get('login-error').textContent = error instanceof Error ? error.message : 'Sign-in failed'; }
-    finally { input('password', ''); button.disabled = false; }
+    finally { clearInterval(heartbeat); verificationId = ''; input('password', ''); button.disabled = false; }
   });
 });
 async function fillAddresses(): Promise<void> {
@@ -257,6 +267,10 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', appearance
 void attempt(async () => {
   await update();
   const params = new URLSearchParams(location.search); const id = params.get('message'), accountId = params.get('account');
+  if (params.has('signin')) {
+    const pending = state.accounts.find(account => account.id === params.get('resume') && account.status !== 'ready');
+    showLogin(pending ? { accountId: pending.id, phase: pending.status === 'totp' ? 'totp' : 'mailbox' } : undefined);
+  }
   if (id && accountId) await read({ accountId, message: { ID: id } } as MailItem);
   else if (state.accounts.some(account => account.status === 'ready')) void attempt(() => update(true));
 });

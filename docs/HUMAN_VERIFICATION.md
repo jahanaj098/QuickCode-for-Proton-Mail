@@ -1,0 +1,11 @@
+# Human verification
+
+QuickCode 0.1.1 implements a user-completed CAPTCHA flow. Sign-in opens in a regular extension tab so the toolbar popup closing cannot interrupt it. A Proton `9001` response with the `captcha` method opens the supplied challenge at `https://mail-api.proton.me/core/v4/captcha` in a dedicated tab. Complete the challenge yourself and keep the QuickCode sign-in tab open.
+
+Proton's endpoint blocks embedding in an extension through its `frame-ancestors` policy. QuickCode leaves that policy intact and uses a top-level tab. A narrowly scoped content script receives the page's self-posted `pm_captcha` result. It checks the message origin, source window, token type and size. The background also checks the sender's top-level frame, exact challenge URL and tab ID before accepting a result for the pending request. It closes that tab, then retries the original request once with the verification token headers. This retains the original SRP proof and session rather than starting another authentication exchange.
+
+Challenge tokens and solutions are held in memory, never logged or saved. Requests expire after three minutes; closing the verification tab cancels the attempt. A rejected solution requires a fresh sign-in. No solver service, automatic challenge solving, response-header rewriting or decryption changes are involved. The content script runs only on the CAPTCHA endpoint, not mailbox pages.
+
+The bridge and transport replay are covered by synthetic tests. A successful real-account challenge and login have not yet been verified. Email/SMS-only challenges remain unsupported. A browser restart or extension reload interrupts a pending challenge; start again.
+
+This is an original QuickCode implementation of Proton's verification protocol. Protocol references: [Proton CAPTCHA frame and message contract](https://github.com/ProtonMail/WebClients/blob/main/packages/components/containers/api/humanVerification/Captcha.tsx), [Proton verification methods](https://github.com/ProtonMail/WebClients/blob/main/packages/shared/lib/interfaces/HumanVerification.ts), and [Proton API verification headers](https://github.com/ProtonMail/go-proton-api/blob/master/manager_auth.go).

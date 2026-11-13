@@ -1,9 +1,10 @@
 // Copyright (c) 2026 jahanaj098. SPDX-License-Identifier: GPL-3.0-only
 import type { Credential } from '../core/model';
+import { challengeFrom, type HumanVerifier } from './verification';
 export class ProtonFailure extends Error {
   constructor(message: string, readonly status: number, readonly code: number, readonly details?: unknown) { super(message); this.name = 'ProtonFailure'; }
 }
-export interface TransportOptions { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; data?: unknown; raw?: boolean; refresh?: boolean }
+export interface TransportOptions { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; data?: unknown; raw?: boolean; refresh?: boolean; verify?: HumanVerifier; verificationToken?: string }
 export class ProtonTransport {
   private rotating = new Map<string, Promise<void>>();
   constructor(private version: () => string, private save: (credential: Credential) => Promise<void>, private fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
@@ -11,6 +12,7 @@ export class ProtonTransport {
     if (!/^(?:core|mail|auth|calendar|drive)\/[a-z\d/?&=_.%:+-]+$/iu.test(route)) throw new Error('Invalid Proton API path');
     const headers: Record<string, string> = { Accept: 'application/vnd.protonmail.v1+json', 'x-pm-appversion': this.version(), 'x-pm-apiversion': '3' };
     if (session) { headers['x-pm-uid'] = session.uid; headers.Authorization = 'Bearer ' + session.access; }
+    if (options.verificationToken) { headers['x-pm-human-verification-token'] = options.verificationToken; headers['x-pm-human-verification-token-type'] = 'captcha'; }
     const isForm = options.data instanceof FormData;
     if (options.data !== undefined && !isForm) headers['Content-Type'] = 'application/json';
     const response = await this.fetcher('https://mail.proton.me/api/' + route, {
@@ -23,7 +25,12 @@ export class ProtonTransport {
     if (options.raw && response.ok) return new Uint8Array(await response.arrayBuffer()) as T;
     const data = await response.json().catch(() => ({})) as { Code?: number; Error?: string; Details?: unknown };
     if (!response.ok || (data.Code !== undefined && data.Code !== 1000 && data.Code !== 1001)) {
-      const message = data.Code === 9001 ? 'Proton requires human verification. This development build cannot complete that challenge yet.' : data.Error || 'Proton request failed (' + response.status + ').';
+      if (data.Code === 9001 && options.verify && !options.verificationToken) {
+        const token = await options.verify(challengeFrom(data.Details));
+        if (!token || token.length > 16384 || /[\r\n]/u.test(token)) throw new Error('Invalid verification response.');
+        return this.request<T>(route, { ...options, verificationToken: token }, session);
+      }
+      const message = data.Code === 9001 ? (options.verificationToken ? 'Proton did not accept the verification. Start sign-in again.' : 'Proton requires human verification. Connect the account from the sign-in screen to complete it.') : data.Error || 'Proton request failed (' + response.status + ').';
       throw new ProtonFailure(message, response.status, data.Code || 0, data.Details);
     }
     return data as T;

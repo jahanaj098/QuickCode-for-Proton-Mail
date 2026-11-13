@@ -66,6 +66,26 @@ try {
   await page.screenshot({ path: path.join(output, 'dark.png') });
   await page.setViewportSize({ width: 400, height: 600 }); await page.evaluate(() => { document.body.style.width = '400px'; }); assert.ok(await page.evaluate(() => document.body.scrollWidth <= 400));
   await page.screenshot({ path: path.join(output, 'narrow.png') });
+  // Exercise the isolated verification bridge with a synthetic Proton-origin page.
+  // The route is fulfilled locally; no request reaches Proton or a solver service.
+  const verificationPage = await context.newPage();
+  await verificationPage.route('https://mail-api.proton.me/core/v4/captcha*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Synthetic verification</title>' }));
+  await verificationPage.goto('https://mail-api.proton.me/core/v4/captcha?Token=synthetic&ForceWebMessaging=1');
+  await verificationPage.evaluate(() => {
+    window.verificationMessages = [];
+    window.chrome.runtime.sendMessage = async message => { window.verificationMessages.push(message); return { ok: true, value: true }; };
+  });
+  await verificationPage.addScriptTag({ path: path.join(directory, 'verification.js') });
+  await verificationPage.evaluate(() => {
+    window.dispatchEvent(new MessageEvent('message', { origin: 'https://evil.test', source: window, data: { type: 'pm_captcha', token: 'forged' } }));
+    window.postMessage({ type: 'pm_captcha', token: 'synthetic:ExactCase' }, location.origin);
+  });
+  await verificationPage.waitForFunction(() => window.verificationMessages.length === 1);
+  assert.deepEqual(await verificationPage.evaluate(() => window.verificationMessages[0]), { quickcode: 1, operation: 'verification-result', data: { token: 'synthetic:ExactCase' } });
+  await verificationPage.evaluate(() => window.postMessage({ type: 'pm_captcha', token: 'duplicate' }, location.origin));
+  await verificationPage.waitForTimeout(50);
+  assert.equal(await verificationPage.evaluate(() => window.verificationMessages.length), 1);
+  await verificationPage.close();
   assert.equal(errors.length, 0, errors.join('\n')); console.log('Original browser checks passed: real SRP proof generation, filters, clipboard, sanitized reader, search, range selection, composer, TOTP/mailbox continuation, theme and narrow layout.');
   await context.close();
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

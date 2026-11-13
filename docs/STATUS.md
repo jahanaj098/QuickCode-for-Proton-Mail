@@ -1,4 +1,4 @@
-# Development status — original implementation 0.1.0
+# Development status — original implementation 0.1.1
 
 This is a newly written project, not the previous extension with its history removed. Application code and UI are new. Third-party dependencies are recorded in THIRD_PARTY.md.
 
@@ -6,6 +6,7 @@ This is a newly written project, not the previous extension with its history rem
 
 - Strict TypeScript modules and separately generated Chrome/Firefox MV3 builds.
 - SRP login orchestration using Proton's published library, including server-proof verification before storing a session.
+- User-completed CAPTCHA in a dedicated Proton tab, with one replay of the challenged request. Live acceptance still requires validation.
 - TOTP continuation and a separate mailbox-password prompt. Login passwords are cleared and not persisted by QuickCode.
 - Local mailbox-key unlocking, verification of address-key tokens, body decryption, and attachment decryption.
 - Remembered credentials encrypted with an AES-GCM nonextractable local device key. Browser-session credentials use storage.session. This is not a master-password vault: control of the browser profile can expose remembered sessions.
@@ -27,7 +28,7 @@ The tests verify local cryptographic round trips and package assembly. They do n
 
 ## Not implemented
 
-- Human verification/CAPTCHA and passkey/FIDO2 login.
+- Email/SMS-only human verification and passkey/FIDO2 login.
 - Legacy keys without salts, non-private managed organization keys, recovery workflows and SSO.
 - Scribe, Proton Drive link sharing, calendar RSVP/ICS import, contact autocomplete and snooze.
 - Attachment inline preview, sender-signature/key-transparency verification, notification sounds, custom notification click actions and undo for destructive actions.
@@ -41,7 +42,7 @@ Custom regex filtering rejects some dangerous forms, but is not a full regex exe
 
 Firefox's local package validator currently reports zero errors and one warning: DOMPurify's bundled parser assigns input to an inert document's innerHTML as part of sanitization. The reader consumes only its sanitized output in a restricted sandbox. This warning still requires review before any store submission; it has not been suppressed.
 
-Current local verification: 23 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
+Current local verification: 28 tests pass. The browser test also runs the real published SRP SDK against Proton's public signed-modulus test fixture and rejects an altered modulus. That is a protocol/library interoperability check, not a live login test.
 
 ## First real-account validation
 

@@ -12,6 +12,7 @@ describe('Alarm and cold-worker behavior', () => {
     const event = () => ({ addListener() {} });
     vi.stubGlobal('chrome', {
       runtime: { id: 'fixture', onMessage: { addListener: (listener: any) => incoming.push(listener) }, onStartup: event(), onInstalled: event(), sendMessage: async () => {} },
+      tabs: { onRemoved: event() },
       storage: { local: { get: async () => ({}), remove: async () => {}, set: async () => {} }, session: {
         get: async (key: string | string[]) => Object.fromEntries((Array.isArray(key) ? key : [key]).map(id => [id, session[id]])),
         set: async (value: Record<string, unknown>) => { Object.assign(session, value); },

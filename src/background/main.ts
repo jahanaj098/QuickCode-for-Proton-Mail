@@ -8,6 +8,15 @@ import { StandaloneLogin } from '../proton/login';
 import { Mailbox, type ComposeInput } from '../proton/mail';
 import { Notifications } from './notifications';
 import { base64 } from '../core/encoding';
+import { VerificationRequests } from './verification';
+import { captchaURL, type HumanChallenge } from '../proton/verification';
+const verificationTabs = new Map<number, { id: string; owner: string; url: string }>();
+const verification = new VerificationRequests(async (id, challenge, owner) => {
+  const url = captchaURL(challenge.token);
+  const tab = await extension.tabs.create({ url, active: true });
+  if (tab.id === undefined) throw new Error('Could not open Proton verification.');
+  verificationTabs.set(tab.id, { id, owner, url });
+});
 
 let settings = defaults();
 const sessions = new Map<string, Credential>();
@@ -82,13 +91,30 @@ async function poll(): Promise<void> {
   })().finally(() => { polling = undefined; });
   return polling;
 }
-async function handle(operation: string, input: unknown): Promise<unknown> {
+async function handle(operation: string, input: unknown, sender: chrome.runtime.MessageSender): Promise<unknown> {
   await ready;
   const data = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const owner = sender.documentId || String(sender.tab?.id ?? '') + ':' + (sender.url || '');
+  const verificationId = String(data.verificationId || '');
+  const verify = async (challenge: HumanChallenge): Promise<string> => {
+    try { return await verification.verifier(verificationId, owner)(challenge); }
+    finally {
+      for (const [tabId, request] of verificationTabs) if (request.id === verificationId && request.owner === owner) {
+        verificationTabs.delete(tabId); await extension.tabs.remove(tabId).catch(() => {});
+      }
+    }
+  };
   switch (operation) {
+    case 'verification-result': {
+      const request = sender.tab?.id === undefined ? undefined : verificationTabs.get(sender.tab.id);
+      if (!request || sender.frameId !== 0 || sender.url !== request.url) return false;
+      return verification.finish(request.id, request.owner, typeof data.token === 'string' ? data.token : undefined);
+    }
+    case 'verification-cancel': return verification.finish(String(data.id || ''), owner);
+    case 'verification-ping': return true;
     case 'dashboard': return dashboard();
-    case 'login': return login.start(String(data.username || ''), String(data.password || ''), data.remember === true, String(data.totp || ''));
-    case 'totp': return login.secondFactor(String(data.accountId), String(data.code || ''));
+    case 'login': return login.start(String(data.username || ''), String(data.password || ''), data.remember === true, String(data.totp || ''), verify);
+    case 'totp': return login.secondFactor(String(data.accountId), String(data.code || ''), verify);
     case 'unlock': { const result = await login.unlock(String(data.accountId), String(data.password || '')); await poll(); return result; }
     case 'refresh': await poll(); return dashboard();
     case 'read': return mailbox.read(account(data.accountId), String(data.messageId));
@@ -138,7 +164,7 @@ async function exportMail(session: Credential, id: string): Promise<{ name: stri
 }
 extension.runtime.onMessage.addListener((message, sender, respond) => {
   if (!message || message.quickcode !== 1 || sender.id !== extension.runtime.id) return false;
-  handle(message.operation, message.data).then(value => respond({ ok: true, value })).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'QuickCode operation failed.' }));
+  handle(message.operation, message.data, sender).then(value => respond({ ok: true, value })).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'QuickCode operation failed.' }));
   return true;
 });
 extension.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'quickcode-poll') void poll(); });
@@ -146,3 +172,8 @@ extension.notifications.onClicked.addListener(id => { void ready.then(() => noti
 extension.notifications.onButtonClicked?.addListener((id, button) => { void ready.then(() => notifications.event(id, button)); });
 extension.runtime.onStartup.addListener(() => { void poll(); });
 extension.runtime.onInstalled.addListener(() => { void poll(); });
+
+extension.tabs.onRemoved.addListener(tabId => {
+  const request = verificationTabs.get(tabId); if (!request) return;
+  verificationTabs.delete(tabId); verification.finish(request.id, request.owner);
+});

@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.0 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.1 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -29,7 +29,7 @@ Screenshots use synthetic mail only.
 - **A focused workspace:** account rail, Messages/Codes/Starred filters, loaded-mail search, multi-select, rich compose, reader and remote-image blocking.
 - **Personal preferences:** three palettes, Light/Dark/Auto, density, dimensions, custom CSS, import/export and manual browser sync.
 
-Mail operations and send options are experimental until tested against Proton's live API. CAPTCHA, passkeys, Scribe, Drive links, calendar RSVP and several other features are not implemented. The [status document](docs/STATUS.md) separates implemented paths, offline validation and missing features.
+Mail operations and send options are experimental until tested against Proton's live API. Passkeys, Scribe, Drive links, calendar RSVP and several other features are not implemented. The [status document](docs/STATUS.md) separates implemented paths, offline validation and missing features.
 
 ## Build and load
 
@@ -52,6 +52,8 @@ Open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**,
 ### Firefox
 
 Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installation lasts until Firefox closes. This project does not yet provide a Mozilla-signed package.
+
+Sign-in opens a regular QuickCode tab. If Proton requests a CAPTCHA, a dedicated Proton verification tab opens; solve it there and keep the QuickCode tab open. The blocked request resumes once verification completes. Email/SMS-only challenges are not supported yet. See [verification flow](docs/HUMAN_VERIFICATION.md).
 
 Use a separate browser profile and a test account for first validation. Enter credentials only into the extension UI. Do not post passwords, tokens or private keys in issues or chats.
 
@@ -76,7 +78,7 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 23 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 28 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 
