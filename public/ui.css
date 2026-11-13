@@ -36,3 +36,5 @@ html { overflow:hidden; }
 .formatting { flex-shrink:0; flex-wrap:wrap; }
 .alert-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:20px; }
 .extension-alert .check { display:flex; }
+
+.more-mail { display:block; margin:16px auto; min-width:160px; }

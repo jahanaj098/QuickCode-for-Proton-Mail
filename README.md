@@ -4,7 +4,7 @@
 <p align="center">An original TypeScript browser-extension project by <a href="https://github.com/jahanaj098">jahanaj098</a>.</p>
 <p align="center"><a href="#build-and-load">Build &amp; install</a> · <a href="docs/STATUS.md">Development status</a> · <a href="docs/PROVENANCE.md">Implementation record</a> · <a href="https://buymeacoffee.com/jahanaj098">Buy me a coffee ☕</a></p>
 
-> **0.1.2 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
+> **0.1.3 development build.** The standalone login, local cryptography and UI are newly implemented. Offline tests pass, but live Proton-account compatibility is not verified. Several planned integrations are still unfinished; see the status document before using this with an account.
 
 ## Built from a fresh starting point
 
@@ -33,7 +33,7 @@ Mail operations and send options are experimental until tested against Proton's 
 
 ## Build and load
 
-Requires Node.js 24+ with npm and Git. Browser targets: Chrome 121+ or Firefox 142+.
+Requires Node.js 24+ with npm and Git. Browser targets: Chrome 127+ or Firefox 142+.
 
 ```sh
 git clone https://github.com/jahanaj098/QuickCode-for-Proton-Mail.git
@@ -56,6 +56,14 @@ Open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, 
 Sign-in opens a regular QuickCode tab. If Proton requests a CAPTCHA, a dedicated Proton verification tab opens; solve it there and keep the QuickCode tab open. The blocked request resumes once verification completes. Email/SMS-only challenges are not supported yet. See [verification flow](docs/HUMAN_VERIFICATION.md).
 
 Use a separate browser profile and a test account for first validation. Enter credentials only into the extension UI. Do not post passwords, tokens or private keys in issues or chats.
+
+## Background notifications and message list
+
+Polling runs in the background while the browser is running; the toolbar popup can stay closed. Existing alarm deadlines are preserved across worker starts, and an overdue worker catches up on restoration. Browser sleep or OS notification settings can still delay alerts. The configured polling interval applies (60 seconds by default, minimum 30 seconds).
+
+Notification Open and body clicks target the toolbar popup, with the selected message queued for its reader. If the browser blocks programmatic popup opening, click the QuickCode toolbar icon to read the queued message; no separate page is opened. Chrome 127+ provides the popup-opening API: [Chrome action documentation](https://developer.chrome.com/docs/extensions/reference/api/action#method-openPopup).
+
+The list initially displays the newest five loaded unread messages. **More** reveals five additional loaded messages at a time. Search and account filters reset the display to five. The configured fetch limit still applies; this is not full mailbox history pagination.
 
 ## Composer conveniences
 
@@ -84,7 +92,7 @@ node tools/check-ui.mjs
 
 The UI check requires installed Microsoft Edge and Playwright. It uses synthetic mail, blocks non-local network requests and never signs in or sends mail. Screenshots are saved under `artifacts/ui`.
 
-All 28 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
+All 32 current tests pass. They exercise real local key/message/attachment encryption round trips, server-proof rejection, session-refresh serialization, notification redaction and worker-restart deduplication. They do **not** certify successful login or delivery through Proton's live service.
 
 ## Privacy boundaries
 

@@ -20,6 +20,7 @@ let loginStep: AuthResult | undefined; let raw = false; let remote = false; let 
 let files: ComposeInput['files'] = []; let patterns: Pattern[] = []; let quiet: QuietRule[] = [];
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let verificationId = '';
+let visibleLimit = 5;
 get('login-dialog').addEventListener('close', () => { if (verificationId) void call('verification-cancel', { id: verificationId }).catch(() => {}); });
 function notify(message: string): void { const toast = get('toast'); toast.textContent = message; toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 5000); }
 async function attempt(action: () => Promise<unknown>): Promise<void> { try { await action(); } catch (error) { notify(error instanceof Error ? error.message : 'The action could not be completed.'); } }
@@ -92,12 +93,13 @@ function render(): void {
   for (const account of state.accounts) {
     const button = node('button', account.label.slice(0, 2).toUpperCase()); button.title = account.label + ' · ' + account.unread + ' loaded unread'; button.setAttribute('aria-label', button.title);
     button.style.borderLeft = '3px solid ' + account.color;
-    button.addEventListener('click', () => { selectedAccount = selectedAccount === account.id ? '' : account.id; selected.clear(); render(); });
+    button.addEventListener('click', () => { selectedAccount = selectedAccount === account.id ? '' : account.id; visibleLimit = 5; selected.clear(); render(); });
     accounts.append(button);
   }
   get<HTMLButtonElement>('compose-open').disabled = !state.accounts.some(account => account.status === 'ready');
   get('total-count').textContent = String(state.items.length); get('code-count').textContent = String(state.items.filter(item => item.codes.length).length);
-  const visible = state.items.filter(matches); const list = get('list'); list.replaceChildren();
+  const matched = state.items.filter(matches).sort((a, b) => b.message.Time - a.message.Time);
+  const visible = matched.slice(0, visibleLimit); const list = get('list'); list.replaceChildren();
   for (const account of state.accounts) {
     const rows = visible.filter(item => item.accountId === account.id); if (!rows.length && visible.length) continue;
     const heading = node('div', account.label, 'account-heading');
@@ -124,6 +126,10 @@ function render(): void {
       if (item.message.NumAttachments) content.append(node('span', ' · ' + item.message.NumAttachments + ' attachment(s)', 'hint'));
       row.append(box, content); row.addEventListener('click', () => { void attempt(() => read(item)); }); list.append(row);
     }
+  }
+  if (matched.length > visible.length) {
+    const more = node('button', 'More · show next ' + Math.min(5, matched.length - visible.length), 'more-mail'); more.id = 'more-mail';
+    more.addEventListener('click', () => { visibleLimit += 5; render(); }); list.append(more);
   }
   const errors = state.accounts.filter(account => account.error).map(account => account.label + ': ' + account.error).join(' · ');
   get('list-status').textContent = !state.accounts.length ? 'Connect a Proton account to begin. Standalone login and decryption are experimental.' : errors || (visible.length ? '' : 'No loaded messages match this view. Refresh or choose another view.');
@@ -254,8 +260,8 @@ get('reply').addEventListener('click', () => { void attempt(() => compose('reply
 get('open-proton').addEventListener('click', () => { void extension.tabs.create({ url: 'https://mail.proton.me' }); });
 get('export-eml').addEventListener('click', () => { if (active) void attempt(async () => download(await call('export-eml', { accountId: active!.accountId, messageId: active!.message.ID }))); });
 get('add-account').addEventListener('click', () => showLogin()); get('refresh').addEventListener('click', () => { void attempt(() => update(true)); }); get('compose-open').addEventListener('click', () => { void attempt(() => compose()); });
-get('search').addEventListener('input', render);
-document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button => button.addEventListener('click', () => { view = button.dataset.view!; document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(item => item.setAttribute('aria-pressed', String(item === button))); render(); }));
+get('search').addEventListener('input', () => { visibleLimit = 5; render(); });
+document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button => button.addEventListener('click', () => { view = button.dataset.view!; visibleLimit = 5; document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(item => item.setAttribute('aria-pressed', String(item === button))); render(); }));
 async function closeComposer(): Promise<void> {
   if (get<HTMLButtonElement>('send').disabled) { notify('Wait for the send attempt to finish'); return; }
   const dirty = !!get('editor').textContent?.trim() || files.length > 0 || ['compose-to', 'compose-cc', 'compose-bcc', 'compose-subject'].some(id => value(id).trim());
@@ -339,10 +345,20 @@ document.addEventListener('keydown', event => {
   if (event.key === 'c') void attempt(() => compose()); if (event.key === 'r' && active) void attempt(() => compose('reply'));
   if (event.key === 'Escape') get('reader').hidden = true;
 });
-extension.runtime.onMessage.addListener(message => { if (message?.quickcodeUpdate) void attempt(() => update()); });
+async function openNotificationTarget(): Promise<boolean> {
+  if (new URLSearchParams(location.search).has('window')) return false;
+  const target = await call<{ accountId: string; messageId: string } | null>('notification-target');
+  if (!target?.accountId || !target.messageId) return false;
+  await read({ accountId: target.accountId, message: { ID: target.messageId } } as MailItem); return true;
+}
+extension.runtime.onMessage.addListener(message => {
+  if (message?.quickcodeUpdate) void attempt(() => update());
+  if (message?.quickcodeOpenMessage) void attempt(openNotificationTarget);
+});
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', appearance);
 void attempt(async () => {
   await update();
+  await openNotificationTarget();
   const params = new URLSearchParams(location.search); const id = params.get('message'), accountId = params.get('account');
   if (params.has('signin')) {
     const pending = state.accounts.find(account => account.id === params.get('resume') && account.status !== 'ready');

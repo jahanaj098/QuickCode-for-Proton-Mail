@@ -10,6 +10,7 @@ import { Notifications } from './notifications';
 import { base64 } from '../core/encoding';
 import { VerificationRequests } from './verification';
 import { captchaURL, type HumanChallenge } from '../proton/verification';
+import { ensurePollingAlarm } from './polling';
 const verificationTabs = new Map<number, { id: string; owner: string; url: string }>();
 const verification = new VerificationRequests(async (id, challenge, owner) => {
   const url = captchaURL(challenge.token);
@@ -51,7 +52,7 @@ const ready = (async () => {
   for (const [id, rows] of Object.entries(memory.snapshot || {})) items.set(id, rows as MailItem[]);
   for (const id of memory.seen || []) seen.add(id);
   seeded = new Set(memory.seeded || []); checkedAt = memory.checkedAt || 0;
-  await extension.alarms.create('quickcode-poll', { periodInMinutes: settings.pollSeconds / 60 });
+  await ensurePollingAlarm(settings.pollSeconds);
 })();
 function account(id: unknown): Credential {
   const session = typeof id === 'string' ? sessions.get(id) : undefined;
@@ -113,7 +114,15 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'verification-cancel': return verification.finish(String(data.id || ''), owner);
     case 'verification-ping': return true;
     case 'dashboard': return dashboard();
-    case 'login': return login.start(String(data.username || ''), String(data.password || ''), data.remember === true, String(data.totp || ''), verify);
+    case 'notification-target': {
+      const target = (await extension.storage.session.get('pendingNotification')).pendingNotification as { accountId: string; messageId: string; requestedAt: number } | undefined;
+      await extension.storage.session.remove('pendingNotification');
+      return target && Date.now() - target.requestedAt < 300_000 ? target : null;
+    }
+    case 'login': {
+      const result = await login.start(String(data.username || ''), String(data.password || ''), data.remember === true, String(data.totp || ''), verify);
+      if (result.phase === 'ready') await poll(); return result;
+    }
     case 'totp': return login.secondFactor(String(data.accountId), String(data.code || ''), verify);
     case 'unlock': { const result = await login.unlock(String(data.accountId), String(data.password || '')); await poll(); return result; }
     case 'refresh': await poll(); return dashboard();
@@ -139,12 +148,12 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     }
     case 'settings': {
       settings = preferences(data.value); await extension.storage.local.set({ preferences: settings });
-      await extension.alarms.create('quickcode-poll', { periodInMinutes: settings.pollSeconds / 60 }); return dashboard();
+      await ensurePollingAlarm(settings.pollSeconds); return dashboard();
     }
     case 'sync-export': await extension.storage.sync.set({ preferences: settings }); return true;
     case 'sync-import': {
       settings = preferences((await extension.storage.sync.get('preferences')).preferences); await extension.storage.local.set({ preferences: settings });
-      await extension.alarms.create('quickcode-poll', { periodInMinutes: settings.pollSeconds / 60 }); return dashboard();
+      await ensurePollingAlarm(settings.pollSeconds); return dashboard();
     }
     case 'export-eml': return exportMail(account(data.accountId), String(data.messageId));
     default: throw new Error('Unknown QuickCode command.');
@@ -179,3 +188,7 @@ extension.tabs.onRemoved.addListener(tabId => {
   const request = verificationTabs.get(tabId); if (!request) return;
   verificationTabs.delete(tabId); verification.finish(request.id, request.owner);
 });
+// A restored worker can catch up without any popup or dashboard message.
+void ready.then(() => {
+  if (!checkedAt || Date.now() - checkedAt >= settings.pollSeconds * 1000) return poll();
+}).catch(() => { console.info('QuickCode: background refresh could not start; it will retry on the next alarm.'); });

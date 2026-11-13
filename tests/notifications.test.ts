@@ -2,9 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { defaults, type MailItem } from '../src/core/model';
 const storage: Record<string, unknown> = {};
 const create = vi.fn(async (_id: string, _options: chrome.notifications.NotificationCreateOptions) => 'id');
+const openPopup = vi.fn(async () => {}), createWindow = vi.fn();
 vi.stubGlobal('chrome', {
   storage: { session: { get: async (id: string) => ({ [id]: storage[id] }), set: async (value: Record<string, unknown>) => { Object.assign(storage, value); } } },
   permissions: { contains: async () => true }, notifications: { create, clear: vi.fn() },
+  windows: { getLastFocused: async () => ({ id: 7 }), update: vi.fn(async () => {}), create: createWindow },
+  action: { openPopup }, runtime: { sendMessage: async () => {} },
 });
 const { Notifications } = await import('../src/background/notifications');
 const mail: MailItem = { accountId: 'account', preview: 'DO NOT LEAK THIS BODY', codes: [{ value: 'Ab12Cd', score: 1, position: 1, distance: 1, source: 'body' }], message: { ID: 'message', ConversationID: 'conversation', Subject: 'Sign in', Sender: { Name: 'Sender', Address: 'sender@example.test' }, Time: 1, Unread: 1, LabelIDs: ['0'] } };
@@ -24,5 +27,16 @@ describe('Private notification policy', () => {
     create.mockClear(); const settings = defaults(); settings.otp.enabled = false; await new Notifications(() => settings).show(mail);
     const options = create.mock.calls[0][1] as unknown as chrome.notifications.NotificationCreateOptions;
     expect(options.buttons).toBeUndefined(); expect(options.message).toBe('Sender — Sign in');
+  });
+  it('opens the toolbar popup on Open, with a queued message and no separate window', async () => {
+    const notifier = new Notifications(defaults); await notifier.show(mail);
+    const id = create.mock.calls.at(-1)![0]; await notifier.event(id, 1);
+    expect(openPopup).toHaveBeenCalledWith({ windowId: 7 }); expect(createWindow).not.toHaveBeenCalled();
+    expect(storage.pendingNotification).toMatchObject({ accountId: 'account', messageId: 'message' });
+  });
+  it('keeps the selected message for manual toolbar opening when the browser rejects openPopup', async () => {
+    openPopup.mockRejectedValueOnce(new Error('gesture required'));
+    const notifier = new Notifications(defaults); await notifier.open({ accountId: 'account', messageId: 'message' });
+    expect(storage.pendingNotification).toMatchObject({ messageId: 'message' }); expect(createWindow).not.toHaveBeenCalled();
   });
 });

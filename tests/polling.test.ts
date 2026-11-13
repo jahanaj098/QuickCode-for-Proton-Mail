@@ -4,7 +4,7 @@ describe('Alarm and cold-worker behavior', () => {
     const old = { ID: 'old', ConversationID: 'old', Subject: 'Older mail', Sender: { Address: 'sender@example.test' }, Time: 1, Unread: 1, LabelIDs: ['0'] };
     const fresh = { ...old, ID: 'new', ConversationID: 'new', Time: 2, Subject: 'OTP: 583920' };
     const session: Record<string, unknown> = { sessions: [{ id: 'account', uid: 'uid', username: 'fixture', label: 'Fixture', color: '#177668', access: 'fake', refresh: 'fake', phase: 'ready', remember: false, keyPassword: 'derived' }],
-      snapshot: { account: [{ accountId: 'account', message: old, preview: '', codes: [] }] }, seen: ['old'], seeded: ['account'] };
+      snapshot: { account: [{ accountId: 'account', message: old, preview: '', codes: [] }] }, seen: ['old'], seeded: ['account'], checkedAt: Date.now() };
     const alarms: ((alarm: { name: string }) => void)[] = [];
     const incoming: ((message: unknown, sender: unknown, respond: (response: any) => void) => boolean)[] = [];
     const create = vi.fn(async () => 'notification');
@@ -17,15 +17,16 @@ describe('Alarm and cold-worker behavior', () => {
         get: async (key: string | string[]) => Object.fromEntries((Array.isArray(key) ? key : [key]).map(id => [id, session[id]])),
         set: async (value: Record<string, unknown>) => { Object.assign(session, value); },
       } }, permissions: { contains: async () => true },
-      alarms: { create: async () => {}, onAlarm: { addListener: (listener: any) => alarms.push(listener) } },
+      alarms: { get: async () => ({ periodInMinutes: 1 }), create: async () => {}, onAlarm: { addListener: (listener: any) => alarms.push(listener) } },
       notifications: { create, onClicked: event(), onButtonClicked: event() }, action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
     });
     const dashboard = () => new Promise<any>(resolve => incoming.at(-1)!({ quickcode: 1, operation: 'dashboard' }, { id: 'fixture' }, resolve));
-    await import('../src/background/main'); await dashboard();
+    await import('../src/background/main');
+    // No dashboard/popup request: worker bootstrap and alarms must work alone.
     alarms.at(-1)!({ name: 'quickcode-poll' });
     await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(session.seen).toContain('new'));
-    vi.resetModules(); await import('../src/background/main'); await dashboard();
+    vi.resetModules(); await import('../src/background/main');
     alarms.at(-1)!({ name: 'quickcode-poll' });
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(create).toHaveBeenCalledOnce();

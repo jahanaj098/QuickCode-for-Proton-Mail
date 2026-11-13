@@ -35,8 +35,20 @@ export class Notifications {
     await extension.storage.session.set({ notificationTargets: recent });
     try { await extension.notifications.create(id, options); } catch { if (!this.warned) { console.info('QuickCode: the browser could not display a notification.'); this.warned = true; } }
   }
-  async open(target: NotificationTarget): Promise<void> {
-    await extension.windows.create({ url: extension.runtime.getURL('ui.html?' + new URLSearchParams({ account: target.accountId, message: target.messageId, window: '1' })), type: 'popup', width: 800, height: 700 });
+  async open(target: NotificationTarget): Promise<boolean> {
+    await extension.storage.session.set({ pendingNotification: { accountId: target.accountId, messageId: target.messageId, requestedAt: Date.now() } });
+    try {
+      const window = await extension.windows.getLastFocused({ windowTypes: ['normal'] });
+      if (window.id !== undefined) await extension.windows.update(window.id, { focused: true });
+      await extension.action.openPopup(window.id === undefined ? {} : { windowId: window.id });
+      void extension.runtime.sendMessage({ quickcodeOpenMessage: true }).catch(() => {});
+      return true;
+    } catch {
+      // Some browser versions require a direct toolbar gesture. Keep the target
+      // for the next toolbar open, rather than opening a separate page.
+      console.info('QuickCode: click the toolbar icon to open the selected message.');
+      return false;
+    }
   }
   async event(id: string, button?: number): Promise<void> {
     const targets = await this.targets(); const target = targets[id]; if (!target) return;
@@ -52,7 +64,7 @@ export class Notifications {
           if (!result?.copied) throw new Error('Clipboard unavailable');
         }
       } catch { await this.open(target); return; }
-    } else await this.open(target);
+    } else if (!await this.open(target)) return;
     await extension.notifications.clear(id); delete targets[id]; await extension.storage.session.set({ notificationTargets: targets });
   }
 }

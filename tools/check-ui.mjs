@@ -31,6 +31,9 @@ try {
     let current = { accounts: [account], items, settings, checkedAt: Date.now(), polling: false };
     const localStorageMock = {}; window.sentMessages = [];
     window.chrome = { storage: { local: { get: async key => ({ [key]: localStorageMock[key] }), set: async data => Object.assign(localStorageMock, data) } }, runtime: { id: 'test-extension', onMessage: { addListener() {} }, sendMessage: async ({ operation, data }) => {
+      if (operation === 'fixture-expand') { current.items = [...items, ...Array.from({length:5}, (_, i) => item(String(i+4), 'Older sender', 'Older message '+i, 'Older preview'))]; return {ok:true}; }
+      if (operation === 'fixture-reset') { current.items = items; return {ok:true}; }
+      if (operation === 'notification-target') return { ok:true, value: location.search.includes('notificationFixture') ? { accountId:'demo', messageId:'1' } : null };
       if (operation === 'dashboard' || operation === 'refresh') return { ok: true, value: current };
       if (operation === 'read') return { ok: true, value: { ...items.find(item => item.message.ID === data.messageId), body: '<p>Verification code: <b>583920</b></p><img src="https://example.test/tracker"><script>throw Error("unsafe")<\/script>', message: { ...items[0].message, MIMEType: 'text/html' }, attachments: [], signature: 'unverified' } };
       if (operation === 'addresses') return { ok: true, value: [{ ID: 'address', Email: 'sam@example.test', Status: 1 }] };
@@ -61,6 +64,13 @@ try {
   await page.screenshot({ path: path.join(output, 'reader.png') }); await page.locator('#reader-close').click();
   await page.locator('[data-view="all"]').click(); await page.locator('#search').fill('weekend'); assert.equal(await page.locator('.mail-row').count(), 1); await page.locator('#search').fill('');
   await page.locator('.mail-row input').nth(0).click(); await page.locator('.mail-row input').nth(2).click({ modifiers: ['Shift'] }); assert.equal(await page.locator('#selection-count').innerText(), '3 selected');
+  await page.evaluate(() => chrome.runtime.sendMessage({ operation: 'fixture-expand' }));
+  await page.locator('#refresh').click(); await page.waitForFunction(() => document.querySelectorAll('.mail-row').length === 5);
+  assert.equal(await page.locator('.mail-row').first().getAttribute('data-message-id'), '1');
+  await page.locator('#more-mail').click(); assert.equal(await page.locator('.mail-row').count(), 8);
+  await page.locator('[data-view="all"]').click(); assert.equal(await page.locator('.mail-row').count(), 5);
+  await page.evaluate(() => chrome.runtime.sendMessage({ operation: 'fixture-reset' }));
+  await page.locator('#refresh').click(); await page.waitForFunction(() => document.querySelectorAll('.mail-row').length === 3);
   await page.locator('#selection-clear').click(); await page.locator('#compose-open').click(); await page.waitForSelector('#compose-dialog[open]'); await page.screenshot({ path: path.join(output, 'compose.png') }); await page.locator('[data-close="compose-dialog"]').click();
   await page.locator('#compose-open').click();
   await page.locator('#compose-to').fill('previous');
@@ -113,6 +123,12 @@ try {
   await verificationPage.waitForTimeout(50);
   assert.equal(await verificationPage.evaluate(() => window.verificationMessages.length), 1);
   await verificationPage.close();
+  const notificationPage = await context.newPage();
+  await notificationPage.goto(base + '/ui.html?notificationFixture=1');
+  await notificationPage.waitForSelector('#code-chips .code');
+  assert.equal(await notificationPage.locator('#reader').isVisible(), true);
+  assert.ok((await notificationPage.locator('#message-heading').innerText()).includes('Your sign-in code'));
+  await notificationPage.close();
   assert.equal(errors.length, 0, errors.join('\n')); console.log('Original browser checks passed: real SRP proof generation, filters, clipboard, sanitized reader, search, range selection, composer, TOTP/mailbox continuation, theme and narrow layout.');
   await context.close();
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
