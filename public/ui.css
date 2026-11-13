@@ -25,3 +25,14 @@ dialog { margin:auto; width:min(440px,calc(100vw - 28px)); max-height:calc(100vh
 @media(min-width:760px) { body:has(.reader:not([hidden])) .inbox { width:43%; } .reader { left:43%; } }
 @media(max-width:500px) { .pill { display:none; } .welcome { padding:16px; } h1 { font-size:23px; } .views { flex-wrap:wrap; padding-inline:10px; } body { grid-template-rows:60px 96px 80px minmax(0,1fr) 30px; } .views input { width:100%; flex-basis:100%; margin:0 0 5px; padding:5px 8px; } .views button { padding:5px 7px; } .top { padding-inline:14px; } .top .primary { padding:6px 8px; font-size:10px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+
+/* One scrolling surface in the composer; header remains available. */
+html { overflow:hidden; }
+#compose-dialog { overflow:hidden; }
+#compose-form { overflow-y:auto; overflow-x:hidden; min-height:0; }
+.compose-top { position:sticky; top:0; z-index:2; flex-shrink:0; }
+.compose-fields,.compose-bottom { max-height:none; overflow:visible; }
+#editor { height:auto; min-height:180px; overflow:visible; flex:0 0 auto; overflow-wrap:anywhere; }
+.formatting { flex-shrink:0; flex-wrap:wrap; }
+.alert-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:20px; }
+.extension-alert .check { display:flex; }

@@ -119,6 +119,7 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'refresh': await poll(); return dashboard();
     case 'read': return mailbox.read(account(data.accountId), String(data.messageId));
     case 'labels': return mailbox.labels(account(data.accountId));
+    case 'recent-recipients': return mailbox.recentRecipients(account(data.accountId));
     case 'addresses': return (await keyring.unlock(account(data.accountId))).addresses.map(({ ID, Email, DisplayName, Status }) => ({ ID, Email, DisplayName, Status }));
     case 'attachment': return mailbox.download(account(data.accountId), String(data.messageId), String(data.attachmentId));
     case 'action': {
@@ -133,7 +134,8 @@ async function handle(operation: string, input: unknown, sender: chrome.runtime.
     case 'forget': {
       const session = account(data.accountId);
       await api.request('core/v4/auth', { method: 'DELETE' }, session).catch(() => {});
-      keyring.clear(session.id); sessions.delete(session.id); items.delete(session.id); seeded.delete(session.id); await saveSessions(); return dashboard();
+      keyring.clear(session.id); sessions.delete(session.id); items.delete(session.id); seeded.delete(session.id);
+      await extension.storage.local.remove('quickcodeRecipients:' + session.id); await saveSessions(); return dashboard();
     }
     case 'settings': {
       settings = preferences(data.value); await extension.storage.local.set({ preferences: settings });

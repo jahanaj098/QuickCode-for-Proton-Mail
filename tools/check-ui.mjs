@@ -29,10 +29,13 @@ try {
     const item = (id, name, subject, preview, codes = [], starred = false) => ({ accountId: 'demo', preview, codes: codes.map(value => ({ value, score: 1, position: 1, source: 'body', distance: 1 })), message: { ID: id, ConversationID: id, Subject: subject, Sender: { Name: name, Address: name.replace(/\s/g, '').toLowerCase() + '@example.test' }, Time: Date.now() / 1000 - Number(id) * 180, Unread: 1, LabelIDs: starred ? ['0', '10'] : ['0'], ToList: [{ Address: 'sam@example.test' }] } });
     const items = [item('1', 'Orbit', 'Your sign-in code', 'Use your verification code to finish signing in.', ['583920']), item('2', 'Jamie Lee', 'The little things', 'A few ideas for the weekend, if you have a moment.', [], true), item('3', 'Studio Notes', 'A fresh direction', 'The next chapter starts with a blank page.')];
     let current = { accounts: [account], items, settings, checkedAt: Date.now(), polling: false };
-    window.chrome = { runtime: { id: 'test-extension', onMessage: { addListener() {} }, sendMessage: async ({ operation, data }) => {
+    const localStorageMock = {}; window.sentMessages = [];
+    window.chrome = { storage: { local: { get: async key => ({ [key]: localStorageMock[key] }), set: async data => Object.assign(localStorageMock, data) } }, runtime: { id: 'test-extension', onMessage: { addListener() {} }, sendMessage: async ({ operation, data }) => {
       if (operation === 'dashboard' || operation === 'refresh') return { ok: true, value: current };
       if (operation === 'read') return { ok: true, value: { ...items.find(item => item.message.ID === data.messageId), body: '<p>Verification code: <b>583920</b></p><img src="https://example.test/tracker"><script>throw Error("unsafe")<\/script>', message: { ...items[0].message, MIMEType: 'text/html' }, attachments: [], signature: 'unverified' } };
       if (operation === 'addresses') return { ok: true, value: [{ ID: 'address', Email: 'sam@example.test', Status: 1 }] };
+      if (operation === 'send') { window.sentMessages.push(data.message); return { ok: true, value: true }; }
+      if (operation === 'recent-recipients') return { ok: true, value: ['previous@example.test', 'another@example.test'] };
       if (operation === 'labels') return { ok: true, value: [] };
       if (operation === 'settings') { current = { ...current, settings: data.value }; return { ok: true, value: current }; }
       if (operation === 'login') return { ok: true, value: { accountId: 'pending', phase: 'totp' } };
@@ -59,6 +62,30 @@ try {
   await page.locator('[data-view="all"]').click(); await page.locator('#search').fill('weekend'); assert.equal(await page.locator('.mail-row').count(), 1); await page.locator('#search').fill('');
   await page.locator('.mail-row input').nth(0).click(); await page.locator('.mail-row input').nth(2).click({ modifiers: ['Shift'] }); assert.equal(await page.locator('#selection-count').innerText(), '3 selected');
   await page.locator('#selection-clear').click(); await page.locator('#compose-open').click(); await page.waitForSelector('#compose-dialog[open]'); await page.screenshot({ path: path.join(output, 'compose.png') }); await page.locator('[data-close="compose-dialog"]').click();
+  await page.locator('#compose-open').click();
+  await page.locator('#compose-to').fill('previous');
+  await page.waitForFunction(() => [...document.querySelectorAll('#compose-to-suggestions option')].some(option => option.value === 'previous@example.test'));
+  await page.locator('#compose-to').fill('new@example.test, prev');
+  await page.waitForFunction(() => document.querySelector('#compose-to-suggestions option')?.value === 'new@example.test, previous@example.test');
+  await page.locator('#compose-to').fill('previous@example.test');
+  await page.locator('#editor').fill('Synthetic outgoing message');
+  assert.deepEqual(await page.evaluate(() => ['compose-dialog','compose-fields','editor','compose-bottom'].map(id => {
+    const element = document.getElementById(id) || document.querySelector('.' + id); return getComputedStyle(element).overflowY;
+  })), ['hidden','visible','visible','visible']);
+  await page.locator('#send').click(); await page.waitForSelector('.extension-alert[open]');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.sentMessages.length), 0);
+  await page.locator('#send').click(); await page.waitForSelector('.extension-alert[open]');
+  await page.locator('.extension-alert input[type="checkbox"]').check();
+  await page.screenshot({ path: path.join(output, 'send-confirmation.png') });
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.waitForFunction(() => !document.getElementById('compose-dialog').open);
+  assert.equal(await page.evaluate(() => window.sentMessages.length), 1);
+  await page.locator('#compose-open').click();
+  assert.equal(await page.locator('#compose-to').inputValue(), ''); assert.equal(await page.locator('#editor').innerText(), '');
+  await page.locator('#compose-to').fill('second@example.test'); await page.locator('#send').click();
+  await page.waitForFunction(() => window.sentMessages.length === 2 && !document.getElementById('compose-dialog').open);
+  assert.equal(await page.locator('.extension-alert').count(), 0);
   await page.locator('#add-account').click(); await page.locator('#username').fill('offline-fixture'); await page.locator('#password').fill('not-a-real-password'); await page.locator('#login-submit').click();
   await page.waitForSelector('#totp-row:not([hidden])'); await page.locator('#totp').fill('123456'); await page.locator('#login-submit').click(); await page.waitForFunction(() => document.getElementById('login-title').textContent.includes('Unlock'));
   assert.equal(await page.locator('#password').inputValue(), ''); await page.locator('[data-close="login-dialog"]').click();

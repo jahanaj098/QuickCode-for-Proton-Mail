@@ -27,6 +27,10 @@ export class Mailbox {
   async labels(session: Credential): Promise<Label[]> {
     const response = await this.api.request<{ Labels: Label[] }>('core/v4/labels?Type=1', {}, session); return response.Labels;
   }
+  async recentRecipients(session: Credential): Promise<string[]> {
+    const response = await this.api.request<{ Messages: WireMessage[] }>('mail/v4/messages?' + new URLSearchParams({ LabelID: '2', Sort: 'Time', Desc: '1', PageSize: '100', Page: '0' }), {}, session);
+    return [...new Set((response.Messages || []).flatMap(message => [...(message.ToList || []), ...(message.CCList || []), ...(message.BCCList || [])]).map(person => person.Address).filter(address => typeof address === 'string' && /^[^\s<>@,]+@[^\s<>@,]+\.[^\s<>@,]+$/u.test(address)))].slice(0, 200);
+  }
   async list(session: Credential): Promise<MailItem[]> {
     const options = this.preferences(); const folders = options.accounts[session.id]?.folders || ['0'];
     const found = new Map<string, WireMessage>();

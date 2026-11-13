@@ -23,6 +23,56 @@ let verificationId = '';
 get('login-dialog').addEventListener('close', () => { if (verificationId) void call('verification-cancel', { id: verificationId }).catch(() => {}); });
 function notify(message: string): void { const toast = get('toast'); toast.textContent = message; toast.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.hidden = true; }, 5000); }
 async function attempt(action: () => Promise<unknown>): Promise<void> { try { await action(); } catch (error) { notify(error instanceof Error ? error.message : 'The action could not be completed.'); } }
+async function confirmAlert(message: string, accept: string, rememberKey?: string): Promise<boolean> {
+  const key = 'quickcodeAlertPreferences';
+  const saved = ((await extension.storage.local.get(key))[key] || {}) as Record<string, boolean>;
+  if (rememberKey && saved[rememberKey] === true) return true;
+  const dialog = node('dialog'); dialog.className = 'extension-alert'; dialog.setAttribute('aria-label', 'QuickCode confirmation');
+  dialog.append(node('span', 'QUICKCODE', 'eyebrow'), node('h2', accept + '?'), node('p', message));
+  const check = node('input'); check.type = 'checkbox';
+  if (rememberKey) { const label = node('label', undefined, 'check'); label.append(check, node('span', 'Don’t ask again on this device')); dialog.append(label); }
+  const actions = node('div', undefined, 'alert-actions'); const cancel = node('button', 'Cancel'), ok = node('button', accept, 'primary'); actions.append(cancel, ok); dialog.append(actions); document.body.append(dialog);
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = async (accepted: boolean) => {
+      if (settled) return; settled = true;
+      try {
+        if (accepted && rememberKey && check.checked) await extension.storage.local.set({ [key]: { ...saved, [rememberKey]: true } });
+        dialog.close(); dialog.remove(); resolve(accepted);
+      } catch { dialog.close(); dialog.remove(); resolve(false); notify('Could not save the alert preference. Please try again.'); }
+    };
+    cancel.onclick = () => { void finish(false); }; ok.onclick = () => { void finish(true); };
+    dialog.addEventListener('cancel', event => { event.preventDefault(); void finish(false); });
+    dialog.showModal(); cancel.focus();
+  });
+}
+let recipientSuggestions: string[] = [];
+let recipientRequest = 0;
+const suggestionLists = new Map<string, HTMLDataListElement>();
+for (const id of ['compose-to', 'compose-cc', 'compose-bcc']) {
+  const list = node('datalist'); list.id = id + '-suggestions'; document.body.append(list); suggestionLists.set(id, list);
+  get<HTMLInputElement>(id).setAttribute('list', list.id); get<HTMLInputElement>(id).autocomplete = 'off';
+  get(id).addEventListener('input', () => renderRecipientSuggestions(id));
+}
+function renderRecipientSuggestions(id: string): void {
+  const text = value(id), split = Math.max(text.lastIndexOf(','), text.lastIndexOf(';'));
+  const prefix = split < 0 ? '' : text.slice(0, split + 1) + ' ', query = text.slice(split + 1).trim().toLowerCase();
+  const list = suggestionLists.get(id)!; list.replaceChildren();
+  for (const address of recipientSuggestions.filter(address => address.toLowerCase().includes(query)).slice(0, 20)) { const option = node('option'); option.value = prefix + address; list.append(option); }
+}
+async function loadRecipientSuggestions(): Promise<void> {
+  const request = ++recipientRequest, accountId = value('compose-account'); recipientSuggestions = [];
+  for (const id of suggestionLists.keys()) renderRecipientSuggestions(id);
+  const key = 'quickcodeRecipients:' + accountId;
+  const local = (await extension.storage.local.get(key))[key];
+  if (request !== recipientRequest) return;
+  recipientSuggestions = Array.isArray(local) ? local.filter(item => typeof item === 'string') : [];
+  for (const id of suggestionLists.keys()) renderRecipientSuggestions(id);
+  const recent = await call<string[]>('recent-recipients', { accountId }).catch(() => []);
+  if (request !== recipientRequest || accountId !== value('compose-account')) return;
+  recipientSuggestions = [...new Set([...(Array.isArray(local) ? local.filter(item => typeof item === 'string') : []), ...recent])];
+  for (const id of suggestionLists.keys()) renderRecipientSuggestions(id);
+}
 function appearance(): void {
   const settings = state.settings;
   document.body.dataset.scheme = settings.scheme === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : settings.scheme;
@@ -138,6 +188,7 @@ async function fillAddresses(): Promise<void> {
 }
 async function compose(mode?: ComposeInput['action']): Promise<void> {
   const accounts = state.accounts.filter(account => account.status === 'ready'); if (!accounts.length) { showLogin(); return; }
+  resetComposer();
   const select = get<HTMLSelectElement>('compose-account'); select.replaceChildren(); for (const account of accounts) { const option = node('option', account.label); option.value = account.id; select.append(option); }
   select.value = active && mode ? active.accountId : selectedAccount || accounts[0].id; await fillAddresses();
   ['compose-to', 'compose-cc', 'compose-bcc', 'compose-subject', 'compose-alias', 'delivery', 'expiry'].forEach(id => input(id, '')); get('editor').replaceChildren(); files = []; draftParent = {}; renderFiles();
@@ -152,6 +203,14 @@ async function compose(mode?: ComposeInput['action']): Promise<void> {
     const quote = node('blockquote', '\n\n' + active.body.replace(/<[^>]*>/gu, ' ')); get('editor').append(quote);
   }
   open('compose-dialog'); get<HTMLInputElement>('compose-to').focus();
+  void attempt(loadRecipientSuggestions);
+}
+function resetComposer(): void {
+  ['compose-to', 'compose-cc', 'compose-bcc', 'compose-subject', 'compose-alias', 'delivery', 'expiry', 'files'].forEach(id => input(id, ''));
+  get('editor').replaceChildren(); files = []; draftParent = {}; renderFiles();
+  get('compose-title').textContent = 'A new message';
+  get('compose-form').querySelectorAll('details').forEach(detail => { detail.open = false; });
+  get('compose-form').scrollTop = 0;
 }
 function renderFiles(): void { const container = get('compose-files'); container.replaceChildren(); files.forEach((file, index) => { const button = node('button', file.name + ' ×'); button.type = 'button'; button.addEventListener('click', () => { files.splice(index, 1); renderFiles(); }); container.append(button); }); }
 async function addFiles(list: FileList | null): Promise<void> {
@@ -160,23 +219,30 @@ async function addFiles(list: FileList | null): Promise<void> {
   for (const file of list) files.push({ name: file.name, type: file.type, data: base64(new Uint8Array(await file.arrayBuffer())) }); renderFiles();
 }
 get('compose-form').addEventListener('submit', event => { event.preventDefault(); void attempt(async () => {
-  if (!confirm('Send this message through your Proton account?')) return;
-  const send = get<HTMLButtonElement>('send'); send.disabled = true;
+  const send = get<HTMLButtonElement>('send'); if (send.disabled) return; send.disabled = true;
   try {
+    if (!await confirmAlert('Send this message through your Proton account?', 'Send message', 'send')) return;
     const message: ComposeInput = { accountId: value('compose-account'), from: value('compose-alias').trim() || value('compose-address'), to: value('compose-to'), cc: value('compose-cc'), bcc: value('compose-bcc'), subject: value('compose-subject'),
       html: DOMPurify.sanitize(get('editor').innerHTML), files, ...draftParent,
       deliveryTime: value('delivery') ? Math.floor(new Date(value('delivery')).getTime() / 1000) : undefined, expiresIn: value('expiry') ? Number(value('expiry')) * 3600 : undefined };
     if (message.deliveryTime && message.deliveryTime < Date.now() / 1000 + 60) throw new Error('Choose a delivery time at least a minute in the future.');
-    await call('send', { accountId: message.accountId, message, confirmed: true }); close('compose-dialog'); files = []; get('editor').replaceChildren(); notify(message.deliveryTime ? 'Message scheduled' : 'Message sent');
+    await call('send', { accountId: message.accountId, message, confirmed: true });
+    const key = 'quickcodeRecipients:' + message.accountId;
+    const addresses = [message.to, message.cc, message.bcc].join(',').split(/[,;\n]/u).map(address => address.trim()).filter(Boolean);
+    try {
+      const old = (await extension.storage.local.get(key))[key];
+      await extension.storage.local.set({ [key]: [...new Set([...addresses, ...(Array.isArray(old) ? old : [])])].slice(0, 200) });
+    } catch { /* A local suggestion-cache failure must not report a delivered message as failed. */ }
+    close('compose-dialog'); resetComposer(); notify(message.deliveryTime ? 'Message scheduled' : 'Message sent');
   } finally { send.disabled = false; }
 }); });
-get('compose-account').addEventListener('change', () => { void attempt(fillAddresses); });
+get('compose-account').addEventListener('change', () => { void attempt(fillAddresses); void attempt(loadRecipientSuggestions); });
 get('files').addEventListener('change', () => { void attempt(() => addFiles(get<HTMLInputElement>('files').files)); });
 get('drop-zone').addEventListener('dragover', event => event.preventDefault()); get('drop-zone').addEventListener('drop', event => { event.preventDefault(); void attempt(() => addFiles(event.dataTransfer?.files || null)); });
 document.querySelectorAll<HTMLButtonElement>('[data-format]').forEach(button => { button.addEventListener('mousedown', event => event.preventDefault()); button.addEventListener('click', () => { document.execCommand(button.dataset.format!); }); });
 get('insert-link').addEventListener('mousedown', event => event.preventDefault()); get('insert-link').addEventListener('click', () => { const url = prompt('Link URL (https://)'); if (url && /^https:\/\//iu.test(url)) document.execCommand('createLink', false, url); });
 async function runAction(action: string, ids: string[], accountId: string): Promise<void> {
-  const confirmed = action === 'delete' ? confirm('Permanently delete ' + ids.length + ' message(s)? This cannot be undone.') : true; if (!confirmed) return;
+  const confirmed = action === 'delete' ? await confirmAlert('Permanently delete ' + ids.length + ' message(s)? This cannot be undone.', 'Delete permanently') : true; if (!confirmed) return;
   state = await call<Dashboard>('action', { accountId, action, ids, confirmed }); selected.clear(); if (active && ids.includes(active.message.ID) && ['archive', 'trash', 'spam', 'delete'].includes(action)) get('reader').hidden = true; render(); notify('Action completed');
 }
 get('bulk-run').addEventListener('click', () => { void attempt(async () => { const first = state.items.find(item => selected.has(item.message.ID)); if (first) await runAction(value('bulk-action'), [...selected], first.accountId); }); });
@@ -190,8 +256,16 @@ get('export-eml').addEventListener('click', () => { if (active) void attempt(asy
 get('add-account').addEventListener('click', () => showLogin()); get('refresh').addEventListener('click', () => { void attempt(() => update(true)); }); get('compose-open').addEventListener('click', () => { void attempt(() => compose()); });
 get('search').addEventListener('input', render);
 document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(button => button.addEventListener('click', () => { view = button.dataset.view!; document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach(item => item.setAttribute('aria-pressed', String(item === button))); render(); }));
-document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', () => close(button.dataset.close!)));
-get('compose-dialog').addEventListener('cancel', event => { if (get('editor').textContent?.trim() && !confirm('Close the composer and discard its unsent text?')) event.preventDefault(); });
+async function closeComposer(): Promise<void> {
+  if (get<HTMLButtonElement>('send').disabled) { notify('Wait for the send attempt to finish'); return; }
+  const dirty = !!get('editor').textContent?.trim() || files.length > 0 || ['compose-to', 'compose-cc', 'compose-bcc', 'compose-subject'].some(id => value(id).trim());
+  if (dirty && !await confirmAlert('Close the composer and discard this unsent message?', 'Discard message')) return;
+  close('compose-dialog'); resetComposer();
+}
+document.querySelectorAll<HTMLButtonElement>('[data-close]').forEach(button => button.addEventListener('click', () => {
+  if (button.dataset.close === 'compose-dialog') void attempt(closeComposer); else close(button.dataset.close!);
+}));
+get('compose-dialog').addEventListener('cancel', event => { event.preventDefault(); void attempt(closeComposer); });
 function patternRows(): void {
   const container = get('patterns'); container.replaceChildren();
   for (const pattern of patterns) {
@@ -210,6 +284,9 @@ function quietRows(): void {
     const remove = node('button', '×'); remove.type = 'button'; remove.setAttribute('aria-label', 'Remove quiet rule'); remove.onclick = () => { quiet = quiet.filter(item => item !== rule); quietRows(); }; row.append(enabled, field, contains, remove); container.append(row);
   }
 }
+const resetAlerts = node('button', 'Reset confirmation alerts'); resetAlerts.type = 'button';
+resetAlerts.addEventListener('click', () => { void attempt(async () => { await extension.storage.local.set({ quickcodeAlertPreferences: {} }); notify('Confirmation alerts restored'); }); });
+get('preferences-form').append(resetAlerts);
 async function showSettings(): Promise<void> {
   const settings = state.settings;
   for (const key of ['scheme', 'theme', 'density', 'width', 'height', 'limit'] as const) input(key, settings[key]);
